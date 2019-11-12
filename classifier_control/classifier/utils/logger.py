@@ -1,9 +1,11 @@
 import os
+import pdb
 import torchvision
 import torch
 from tensorboardX import SummaryWriter
 import matplotlib.pyplot as plt
 import numpy as np
+from classifier_control.classifier.utils.vis_utils import draw_text_image
 
 from classifier_control.classifier.utils.vis_utils import plot_graph
 
@@ -86,13 +88,45 @@ class Logger:
         self._summ_writer.export_scalars_to_json(log_path)
 
 
-# class TdistClassifierLogger(Logger):
-#     def log_single_tdist_classifier_image(self, model_output, inputs, name, step, phase):
-#
-#         model_output.pos_pair
+def unstack(array, dim):
+    arr = np.split(array, array.shape[dim], dim)
+    arr = [a.squeeze() for a in arr]
+    return arr
 
 
+class TdistClassifierLogger(Logger):
+    def log_single_tdist_classifier_image(self, pos_pair, neg_pair, out_sigmoid,
+                                                  name, step, phase):
 
+        pos_pair = pos_pair.data.cpu().numpy().squeeze()
+        neg_pair = neg_pair.data.cpu().numpy().squeeze()
 
+        pos_pred = out_sigmoid[:out_sigmoid.shape[0]//2].data.cpu().numpy()
+        neg_pred = out_sigmoid[out_sigmoid.shape[0]//2:].data.cpu().numpy()
 
+        def image_row(image_pairs, scores):
+
+            first_row = image_pairs[:, 0]
+            first_row = first_row[:self._n_logged_samples]
+            first_row = np.concatenate(unstack(first_row, 0), 2)
+
+            second_row = image_pairs[:, 1]
+            second_row = second_row[:self._n_logged_samples]
+            second_row = np.concatenate(unstack(second_row, 0), 2)
+
+            numbers = get_sigmoid_annotations(scores)
+
+            return np.concatenate([first_row, second_row, numbers], 1)
+
+        def get_sigmoid_annotations(pred_scores):
+            text_images = []
+            for b in range(self._n_logged_samples):
+                text_images.append(draw_text_image('{}'.format(pred_scores[b])).transpose(2, 0, 1))
+            return np.concatenate(text_images, 2)
+
+        positives_image = image_row(pos_pair, pos_pred)
+        self._summ_writer.add_image('{}_{}'.format(name + '_positives', phase), positives_image, step)
+
+        positives_image = image_row(neg_pair, neg_pred)
+        self._summ_writer.add_image('{}_{}'.format(name + '_negatives', phase), positives_image, step)
 

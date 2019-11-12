@@ -1,24 +1,22 @@
-from contextlib import contextmanager
 import numpy as np
+import copy
 import torch
 from classifier_control.classifier.utils.general_utils import AttrDict
 import torch.nn as nn
-from utils import add_n_dims
-from classifier_control.classifier.models.base_model import BaseModel
+import pdb
 from classifier_control.classifier.utils.subnetworks import ConvEncoder
 from classifier_control.classifier.utils.spatial_softmax import SpatialSoftmax
 
-
-from classifier_control.classifier.utils.layers import LayerBuilderParams
+from classifier_control.classifier.models.base_model import BaseModel
 from classifier_control.classifier.utils.layers import Linear
 
 
-class SingleTempDistClassifier(nn.Module):
+class SingleTempDistClassifier(BaseModel):
     def __init__(self, params, tdist, logger):
-        super().__init__()
+        super().__init__(logger)
         self._hp = self._default_hparams()
         self.override_defaults(params)  # override defaults with config file
-        self.logger = logger
+        self.postprocess_params()
         assert self._hp.batch_size != -1  # make sure that batch size was overridden
 
         self.tdist = tdist
@@ -27,7 +25,9 @@ class SingleTempDistClassifier(nn.Module):
 
     def _default_hparams(self):
         default_dict = AttrDict({
-            'builder':LayerBuilderParams(use_convs=True)
+            'use_skips':False, #todo try resnet architecture!
+            'ngf': 8,
+            'nz_enc': 64,
         })
 
         # add new params to parent params
@@ -39,11 +39,10 @@ class SingleTempDistClassifier(nn.Module):
     def build_network(self, build_encoder=True):
         self.encoder = ConvEncoder(self._hp)
         out_size = self.encoder.get_output_size()
-        self.spatial_softmax = SpatialSoftmax(out_size[0], out_size[1], out_size[2])
-        self.linear = Linear(in_dim=out_size[0], out_dim=2, builder=self._hp.builder)
+        self.spatial_softmax = SpatialSoftmax(out_size[1], out_size[2], out_size[0])  # height, width, channel
+        self.linear = Linear(in_dim=out_size[0]*2, out_dim=1, builder=self._hp.builder)
 
-        self.softmax = torch.nn.Softmax(dim=1)
-        self.loss = nn.CrossEntropyLoss()
+        self.cross_ent_loss = nn.BCEWithLogitsLoss()
 
     def forward(self, inputs):
         """
@@ -53,39 +52,79 @@ class SingleTempDistClassifier(nn.Module):
         :return: model_output
         """
 
-        tlen = inputs.demo_seq_images.shape[0]
+        tlen = inputs.demo_seq_images.shape[1]
         pos_pairs, neg_pairs = self.sample_image_pair(inputs.demo_seq_images, tlen, self.tdist)
         image_pairs = torch.cat([pos_pairs, neg_pairs], dim=0)
         embeddings = self.encoder(image_pairs)
         embeddings = self.spatial_softmax(embeddings)
         logits = self.linear(embeddings)
-        self.softmax_act = self.softmax(logits)
-        model_output = AttrDict(logits=logits, pos_pair=self.pos_pair, neg_pair=self.neg_pair)
+        self.out_sigmoid = torch.sigmoid(logits)
+        model_output = AttrDict(logits=logits, out_simoid=self.out_sigmoid, pos_pair=self.pos_pair, neg_pair=self.neg_pair)
         return model_output
 
     def sample_image_pair(self, images, tlen, tdist):
 
         # get positives:
-        t0 = torch.randint(0, tlen - tdist, self._hp.batch_size//2)
-        t1 = t0 + torch.randint(0, tdist, self._hp.batch_size//2)
-        self.pos_pair = torch.stack([images[t0],images[t1]], dim=1)
-        pos_pair_cat = torch.cat([images[t0],images[t1]], dim=-1)
+        t0 = np.random.randint(0, tlen - tdist - 1, self._hp.batch_size)
+        t1 = t0 + 1 + np.random.randint(0, tdist, self._hp.batch_size)
+        t0, t1 = torch.from_numpy(t0), torch.from_numpy(t1)
+
+        # im_t0 = torch.gather(images, 1, t0.cuda())
+        # im_t1 = torch.index_select(images, 1, t1.cuda())
+
+        im_t0 = select_indices(images, t0)
+        im_t1 = select_indices(images, t1)
+
+        self.pos_pair = torch.stack([im_t0, im_t1], dim=1)
+        pos_pair_cat = torch.cat([im_t0, im_t1], dim=1)
 
         # get negatives:
-        t0 = torch.randint(0, tlen - tdist - 1, self._hp.batch_size//2)
-        t1 = torch.randint(t0 + tdist, tlen, self._hp.batch_size//2)
-        self.neg_pair = torch.stack([images[t0],images[t1]], dim=1)
-        neg_pair_cat = torch.cat([images[t0],images[t1]], dim=-1)
+        t0 = np.random.randint(0, tlen - tdist - 1, self._hp.batch_size)
+        t1 = np.random.randint(t0 + tdist, tlen, self._hp.batch_size)
+        t0, t1 = torch.from_numpy(t0), torch.from_numpy(t1)
+
+        # im_t0 = torch.index_select(images, 1, t0.cuda())
+        # im_t1 = torch.index_select(images, 1, t1.cuda())
+        im_t0 = select_indices(images, t0)
+        im_t1 = select_indices(images, t1)
+        self.neg_pair = torch.stack([im_t0, im_t1], dim=1)
+        neg_pair_cat = torch.cat([im_t0, im_t1], dim=1)
 
         # one means within range of tdist range,  zero means outside of tdist range
         self.labels = torch.cat([torch.ones(self._hp.batch_size), torch.zeros(self._hp.batch_size)])
 
         return pos_pair_cat, neg_pair_cat
 
-    def loss(self, inputs, model_output):
-        return self.loss(inputs, self.labels)
+    def loss(self, model_inputs, model_output):
+        logits_ = model_output.logits[:, 0]
+        return self.cross_ent_loss(logits_, self.labels.to(self._hp.device))
 
-    # def log_outputs(self, model_output, inputs, losses, step, log_images, phase):
-    #     if log_images:
-    #         self.logger.log_single_tdist_classifier_image(self.pos_pair, self.neg_pair, self.softmax_act,
-    #                                                       'tdist{}'.format(self.tdist), step, phase)
+    def _log_outputs(self, model_output, inputs, losses, step, log_images, phase):
+
+        out_sigmoid = self.out_sigmoid.data.cpu().numpy().squeeze()
+        predictions = np.zeros(out_sigmoid.shape)
+        predictions[np.where(out_sigmoid > 0.5)] = 1
+
+        labels = self.labels.data.cpu().numpy()
+
+        num_neg = np.sum(labels == 0)
+        false_positive_rate = np.sum(predictions[np.where(labels == 0)])/float(num_neg)
+
+        num_pos = np.sum(labels == 1)
+        false_negative_rate = np.sum(1-predictions[np.where(labels == 1)])/float(num_pos)
+
+        self._logger.log_scalar(false_positive_rate, 'tdist{}_false_postive_rate'.format(self.tdist), step, phase)
+        self._logger.log_scalar(false_negative_rate, 'tdist{}_false_negative_rate'.format(self.tdist), step, phase)
+
+        if log_images:
+            self._logger.log_single_tdist_classifier_image(self.pos_pair, self.neg_pair, self.out_sigmoid,
+                                                          'tdist{}'.format(self.tdist), step, phase)
+
+
+def select_indices(tensor, indices):
+    new_images = []
+    for b in range(tensor.shape[0]):
+        new_images.append(tensor[b, indices[b]])
+    tensor = torch.stack(new_images, dim=0)
+    return tensor
+

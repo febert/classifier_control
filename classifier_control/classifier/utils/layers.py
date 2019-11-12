@@ -1,8 +1,6 @@
 import torch.nn as nn
-from recursive_planning.rec_planner_utils.general_utils import ConcatSequential, HasParameters
-from utils import AttrDict
+from .general_utils import AttrDict
 from functools import partial
-
 from classifier_control.classifier.utils.general_utils import HasParameters
 import math
 
@@ -118,11 +116,9 @@ class ConvBlockEnc(ConvBlock):
         return params
 
 def get_num_conv_layers(img_sz):
-    n = math.log2(img_sz)
-    assert n == round(n), 'imageSize must be a power of 2'
+    n = math.log2(img_sz[0])
     assert n >= 3, 'imageSize must be at least 8'
     return int(n)
-
 
 
 class LayerBuilderParams:

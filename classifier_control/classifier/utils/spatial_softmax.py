@@ -24,8 +24,8 @@ class SpatialSoftmax(torch.nn.Module):
         )
         self.pos_x = torch.from_numpy(pos_x.reshape(self.height * self.width)).float()
         self.pos_y = torch.from_numpy(pos_y.reshape(self.height * self.width)).float()
-        self.register_buffer('pos_x', self.pos_x)
-        self.register_buffer('pos_y', self.pos_y)
+        self.register_buffer('_pos_x', self.pos_x)
+        self.register_buffer('_pos_y', self.pos_y)
 
     def forward(self, feature):
         # Output:
@@ -36,8 +36,8 @@ class SpatialSoftmax(torch.nn.Module):
             feature = feature.view(-1, self.height * self.width)
 
         softmax_attention = F.softmax(feature / self.temperature, dim=-1)
-        expected_x = torch.sum(Variable(self.pos_x) * softmax_attention, dim=1, keepdim=True)
-        expected_y = torch.sum(Variable(self.pos_y) * softmax_attention, dim=1, keepdim=True)
+        expected_x = torch.sum(Variable(self._pos_x) * softmax_attention, dim=1, keepdim=True)
+        expected_y = torch.sum(Variable(self._pos_y) * softmax_attention, dim=1, keepdim=True)
         # expected_x = torch.sum(self.pos_x * softmax_attention, dim=1, keepdim=True)
         # expected_y = torch.sum(self.pos_y * softmax_attention, dim=1, keepdim=True)
         expected_xy = torch.cat([expected_x, expected_y], 1)

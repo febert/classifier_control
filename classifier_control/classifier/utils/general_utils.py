@@ -2,6 +2,7 @@ import numpy as np
 from PIL import Image
 from torchvision.transforms import Resize
 import torch
+from functools import partial, reduce
 
 def str2int(str):
     try:
@@ -98,6 +99,71 @@ def resize_video(video, size):
     # transformed_video = ch_last2first(transformed_video).astype(np.float32)
     return transformed_video
 
+
+def make_recursive(fn, *argv, **kwargs):
+    """ Takes a fn and returns a function that can apply fn on tensor structure
+     which can be a single tensor, tuple or a list. """
+
+    def recursive_map(tensors):
+        if tensors is None:
+            return tensors
+        elif isinstance(tensors, list) or isinstance(tensors, tuple):
+            return type(tensors)(map(recursive_map, tensors))
+        elif isinstance(tensors, dict):
+            return type(tensors)(map_dict(recursive_map, tensors))
+        elif isinstance(tensors, torch.Tensor):
+            return fn(tensors, *argv, **kwargs)
+        else:
+            try:
+                return fn(tensors, *argv, **kwargs)
+            except Exception as e:
+                print("The following error was raised when recursively applying a function:")
+                print(e)
+                raise ValueError("Type {} not supported for recursive map".format(type(tensors)))
+
+    return recursive_map
+
+
+def listdict2dictlist(LD):
+    """ Converts a list of dicts to a dict of lists """
+
+    # Take intersection of keys
+    keys = reduce(lambda x, y: x & y, (map(lambda d: d.keys(), LD)))
+    return AttrDict({k: [dic[k] for dic in LD] for k in keys})
+
+def make_recursive_list(fn):
+    """ Takes a fn and returns a function that can apply fn across tuples of tensor structures,
+     each of which can be a single tensor, tuple or a list. """
+
+    def recursive_map(tensors):
+        if tensors is None:
+            return tensors
+        elif isinstance(tensors[0], list) or isinstance(tensors[0], tuple):
+            return type(tensors[0])(map(recursive_map, zip(*tensors)))
+        elif isinstance(tensors[0], dict):
+            return map_dict(recursive_map, listdict2dictlist(tensors))
+        elif isinstance(tensors[0], torch.Tensor):
+            return fn(*tensors)
+        else:
+            try:
+                return fn(*tensors)
+            except Exception as e:
+                print("The following error was raised when recursively applying a function:")
+                print(e)
+                raise ValueError("Type {} not supported for recursive map".format(type(tensors)))
+
+    return recursive_map
+
+
+recursively = make_recursive
+
+
+def map_recursive(fn, tensors):
+    return make_recursive(fn)(tensors)
+
+
+def map_recursive_list(fn, tensors):
+    return make_recursive_list(fn)(tensors)
 
 class AverageMeter(object):
     """Computes and stores the average and current value"""

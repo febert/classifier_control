@@ -80,6 +80,7 @@ class FixLenVideoDataset(BaseVideoDataset):
         self.filter_repeated_tail = False
 
     def _get_filenames(self):
+        assert 'hdf5' not in self.data_dir, "hdf5 most not be containted in the data dir!"
         filenames = sorted(glob.glob(os.path.join(self.data_dir, os.path.join('hdf5', self.phase) + '/*')))
         if not filenames:
             raise RuntimeError('No filenames found in {}'.format(self.data_dir))

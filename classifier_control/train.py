@@ -63,7 +63,7 @@ class ModelTrainer(BaseTrainer):
         
         self._hp = self._default_hparams()
         self.override_defaults(conf)  # override defaults with config file
-        
+
         self._hp.set_hparam('exp_path', make_path(exp_dir, args.path, args.prefix, args.new_dir))
         self.log_dir = log_dir = os.path.join(self._hp.exp_path, 'events')
         print('using log dir: ', log_dir)
@@ -75,35 +75,36 @@ class ModelTrainer(BaseTrainer):
         print('Writing to the experiment directory: {}'.format(self._hp.exp_path))
         if not os.path.exists(self._hp.exp_path):
             os.makedirs(self._hp.exp_path)
-        if not args.dont_save:
-            save_cmd(self._hp.exp_path)
-            save_git(self._hp.exp_path)
-            save_config(conf_path, os.path.join(self._hp.exp_path, "conf_" + datetime_str() + ".py"))
+
+        save_cmd(self._hp.exp_path)
+        save_git(self._hp.exp_path)
+        # save_config(conf_path, os.path.join(self._hp.exp_path, "conf_" + datetime_str() + ".py"))
         
         self.use_cuda = torch.cuda.is_available()
         self.device = torch.device('cuda') if self.use_cuda else torch.device('cpu')
-        
+
         ## Buld dataset, model. logger, etc.
         writer = SummaryWriter(log_dir)
         # TODO clean up param passing
         model_conf['batch_size'] = self._hp.batch_size
-        model_conf.update(data_conf.dataset_spec)
         model_conf['device'] = self.device.type
+        model_conf['data_conf'] = data_conf
         
-        def build_phase(logger, model, phase, n_repeat=1, dataset_size=-1):
-            logger = logger(log_dir, self._hp, max_seq_len=model_conf['max_seq_len'], summary_writer=writer)
-            model = model(model_conf, logger).to(self.device)
+        def build_phase(logger, ModelClass, phase, n_repeat=1, dataset_size=-1):
+            logger = logger(log_dir, summary_writer=writer)
+            model = ModelClass(model_conf, logger)
+            model.to(self.device)
             model.device = self.device
-            loader = FixLenVideoDataset(self._hp.data_dir, model._hp, self._hp.data_conf).get_data_loader(self._hp.batch_size)
-
+            loader = FixLenVideoDataset(self._hp.data_dir, model._hp, data_conf).get_data_loader(self._hp.batch_size)
             return logger, model, loader
-        
+
         self.logger, self.model, self.train_loader = build_phase(self._hp.logger, self._hp.model, 'train',
                                                                  n_repeat=self._hp.epoch_cycles_train)
         self.logger_test, self.model_test, self.val_loader = \
-            build_phase(self._hp.logger_test, self._hp.model_test, 'val', dataset_size=args.val_data_size)
-        
-        self.optimizer = self.get_optimizer_class()(self.model.parameters(), lr=self._hp.lr)
+            build_phase(self._hp.logger, self._hp.model, 'val', dataset_size=args.val_data_size)
+
+        self.optimizer = Adam(self.model.parameters(), lr=self._hp.lr)
+        # self.optimizer = self.get_optimizer_class()(self.model.parameters(), lr=self._hp.lr)
         self._hp.mpar = self.model._hp
 
         # TODO clean up resuming
@@ -141,7 +142,7 @@ class ModelTrainer(BaseTrainer):
         # conf_path = get_config_path(args.path)
         # print('loading from the config file {}'.format(conf_path))
 
-        pdb.set_trace()
+        conf_path = os.path.abspath(args.path)
         conf_module = imp.load_source('conf', args.path)
         conf = conf_module.configuration
         model_conf = conf_module.model_config
@@ -199,7 +200,6 @@ class ModelTrainer(BaseTrainer):
             'model_test': None,
             'logger': None,
             'logger_test': None,
-            'gradient_clip': None,
             'data_dir': None, # directory where dataset is in
             'batch_size': 64,
             'mpar': None,   # model parameters
@@ -209,7 +209,7 @@ class ModelTrainer(BaseTrainer):
             'epoch_cycles_train': 1,
             'mujoco_xml': None,
             'optimizer': 'adam',    # supported: 'adam', 'rmsprop', 'sgd'
-            'lr': None,
+            'lr': 1e-3,
             'momentum': 0,      # momentum in RMSProp / SGD optimizer
             'adam_beta': 0.9,       # beta1 param in Adam
         }
@@ -257,11 +257,8 @@ class ModelTrainer(BaseTrainer):
             self.optimizer.zero_grad()
             output = self.model(inputs)
             losses = self.model.loss(inputs, output)
-            losses.total_loss.value.backward()
+            losses.total_loss.backward()
             self.optimizer.step()
-            
-            if self.args.train_loop_pdb:
-                import pdb; pdb.set_trace()
             
             upto_log_time.update(time.time() - end)
             if self.log_outputs_now:
@@ -274,7 +271,7 @@ class ModelTrainer(BaseTrainer):
                 print('GPU {}: {}'.format(os.environ["CUDA_VISIBLE_DEVICES"] if self.use_cuda else 'none', self._hp.exp_path))
                 print(('itr: {} Train Epoch: {} [{}/{} ({:.0f}%)]\tLoss: {:.6f}'.format(
                     self.global_step, epoch, self.batch_idx, len(self.train_loader),
-                    100. * self.batch_idx / len(self.train_loader), losses.total_loss.value.item())))
+                    100. * self.batch_idx / len(self.train_loader), losses.total_loss.item())))
                 
                 print('avg time for loading: {:.2f}s, logs: {:.2f}s, compute: {:.2f}s, total: {:.2f}s'
                       .format(data_load_time.avg,
@@ -297,9 +294,9 @@ class ModelTrainer(BaseTrainer):
             with autograd.no_grad():
                 for batch_idx, sample_batched in enumerate(self.val_loader):
                     inputs = AttrDict(map_dict(lambda x: x.to(self.device), sample_batched))
-                    with self.model_test.val_mode():
-                        output = self.model_test(inputs)
-                        losses = self.model_test.loss(inputs, output)
+
+                    output = self.model_test(inputs)
+                    losses = self.model_test.loss(inputs, output)
 
                     losses_meter.update(losses)
                     del losses
@@ -311,22 +308,15 @@ class ModelTrainer(BaseTrainer):
                 self.model_test.log_outputs(
                     output, inputs, losses_meter.avg, self.global_step, log_images=True, phase='val')
                 print(('\nTest set: Average loss: {:.4f} in {:.2f}s\n'
-                       .format(losses_meter.avg.total_loss.value.item(), time.time() - start)))
+                       .format(losses_meter.avg.total_loss.item(), time.time() - start)))
             del output
         
-
     def get_optimizer_class(self):
-        optim = self._hp.optimizer
-        if optim == 'adam':
-            # get_optim = partial(get_clipped_optimizer, optimizer_type=Adam, betas=(self._hp.adam_beta, 0.999))
-            get_optim = partial(Adam, betas=(self._hp.adam_beta, 0.999))
-        elif optim == 'rmsprop':
-            get_optim = partial(get_clipped_optimizer, optimizer_type=RMSprop, momentum=self._hp.momentum)
-        elif optim == 'sgd':
-            get_optim = partial(get_clipped_optimizer, optimizer_type=SGD, momentum=self._hp.momentum)
+        if self._hp.optimizer == 'adam':
+            optim = partial(Adam, betas=(self._hp.adam_beta, 0.999))
         else:
-            raise ValueError("Optimizer '{}' not supported!".format(optim))
-        return partial(get_optim, gradient_clip=self._hp.gradient_clip)
+            raise ValueError("Optimizer '{}' not supported!".format(self._hp.optimizer))
+        return optim
 
 
 def save_config(conf_path, exp_conf_path):

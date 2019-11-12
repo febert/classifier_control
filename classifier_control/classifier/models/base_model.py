@@ -4,24 +4,19 @@ from contextlib import contextmanager
 import pdb
 import torch
 import torch.nn as nn
-from recursive_planning.modules.layers import LayerBuilderParams
+from classifier_control.classifier.utils.layers import LayerBuilderParams
 from tensorflow.contrib.training import HParams
-from utils import AttrDict
+from classifier_control.classifier.utils.general_utils import AttrDict
 
 
 class BaseModel(nn.Module):
     def __init__(self, logger):
         super().__init__()
-        self._hp = None
+        self._hp = self._default_hparams()
         self._logger = logger
 
-    @contextmanager
-    def val_mode(self):
-        """Sets validation parameters. To be used like: with model.val_mode(): ...<do something>..."""
-        raise NotImplementedError("Need to implement val_mode context manager in subclass!")
-
-    def override_defaults(self, policyparams):
-        for name, value in policyparams.items():
+    def override_defaults(self, params):
+        for name, value in params.items():
             print('overriding param {} to value {}'.format(name, value))
             if value == getattr(self._hp, name):
                 raise ValueError("attribute is {} is identical to default value!!".format(name))
@@ -34,8 +29,9 @@ class BaseModel(nn.Module):
             'max_seq_len': -1,
             'n_actions': -1,
             'state_dim': -1,
-            'img_sz': 32,  # image resolution
             'input_nc': 3,  # number of input feature maps
+            'device':None,
+            'data_conf':None
         })
         
         # Network params
@@ -45,23 +41,17 @@ class BaseModel(nn.Module):
             'normalization': 'batch',
         })
 
-        # Misc params
-        default_dict.update({
-            'filter_repeated_tail': False,      # whether to remove repeated states from the dataset
-        })
-        
         # add new params to parent params
         parent_params = HParams()
         for k in default_dict.keys():
             parent_params.add_hparam(k, default_dict[k])
+
         return parent_params
 
     def postprocess_params(self):
-        if not self._hp.use_convs:
-            # self._hp.input_nc = self._hp.img_sz ** 2 * self._hp.input_nc
-            self._hp.input_nc = self._hp.state_dim
         self._hp.add_hparam('builder', LayerBuilderParams(
-            self._hp.use_convs, self._hp.use_batchnorm, self._hp.normalization, self._hp.predictor_normalization))
+            self._hp.use_convs, self._hp.use_batchnorm, self._hp.normalization))
+        self._hp.add_hparam('img_sz', self._hp.data_conf['img_sz'])
 
     def build_network(self):
         raise NotImplementedError("Need to implement this function in the subclass!")
@@ -69,7 +59,7 @@ class BaseModel(nn.Module):
     def forward(self, inputs):
         raise NotImplementedError("Need to implement this function in the subclass!")
 
-    def loss(self, model_output, inputs):
+    def loss(self, inputs, model_output):
         raise NotImplementedError("Need to implement this function in the subclass!")
 
     def log_outputs(self, model_output, inputs, losses, step, log_images, phase):
@@ -81,16 +71,11 @@ class BaseModel(nn.Module):
             
         for module in self.modules():
             if hasattr(module, '_log_outputs'):
-                module._log_outputs(model_output, inputs, losses, step, log_images, phase, self._logger)
+                module._log_outputs(model_output, inputs, losses, step, log_images, phase)
 
-            if hasattr(module, 'log_outputs_stateful'):
-                module.log_outputs_stateful(step, log_images, phase, self._logger)
-            
     def _log_losses(self, losses, step, log_images, phase):
         for name, loss in losses.items():
-            self._logger.log_scalar(loss.value, name, step, phase)
-            if 'breakdown' in loss and log_images:
-                self._logger.log_graph(loss.breakdown, name + '_breakdown', step, phase)
+            self._logger.log_scalar(loss, name, step, phase)
 
     def _load_weights(self, weight_loading_info):
         """

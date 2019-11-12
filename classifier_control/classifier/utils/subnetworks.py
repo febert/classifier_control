@@ -42,6 +42,7 @@ class ConvEncoder(nn.Module):
         self.n = hp.builder.get_num_layers(hp.img_sz)
         self.net = GetIntermediatesSequential(hp.skips_stride) if hp.use_skips else nn.Sequential()
 
+        print('l-1: indim {} outdim {}'.format(hp.input_nc*2, hp.ngf))
         self.net.add_module('input', ConvBlockEnc(in_dim=hp.input_nc*2, out_dim=hp.ngf, normalization=None,
                                                   builder=hp.builder))
         for i in range(self.n - 3):
@@ -49,15 +50,17 @@ class ConvEncoder(nn.Module):
             self.net.add_module('pyramid-{}'.format(i),
                                 ConvBlockEnc(in_dim=filters_in, out_dim=filters_in * 2, normalize=hp.builder.normalize,
                                              builder=hp.builder))
+            print('l{}: indim {} outdim {}'.format(i, filters_in, filters_in*2))
 
         # add output layer
         self.net.add_module('head', nn.Conv2d(hp.ngf * 2 ** (self.n - 3), hp.nz_enc, 4))
+        print('l out: indim {} outdim {}'.format(hp.ngf * 2 ** (self.n - 3), hp.nz_enc))
 
         self.net.apply(init_weights_xavier)
 
-
     def get_output_size(self):
-        return (self._hp.img_sz[0]//(2**self.n), self._hp.img_sz[1]//(2**self.n), self._hp.nz_enc)
+        # return (self._hp.nz_enc, self._hp.img_sz[0]//(2**self.n), self._hp.img_sz[1]//(2**self.n))
+        return (64, 3, 5)   # todo calc this, fix the padding in the convs!
 
     def forward(self, input):
         return self.net(input)
