@@ -69,9 +69,6 @@ class SingleTempDistClassifier(BaseModel):
         t1 = t0 + 1 + np.random.randint(0, tdist, self._hp.batch_size)
         t0, t1 = torch.from_numpy(t0), torch.from_numpy(t1)
 
-        # im_t0 = torch.gather(images, 1, t0.cuda())
-        # im_t1 = torch.index_select(images, 1, t1.cuda())
-
         im_t0 = select_indices(images, t0)
         im_t1 = select_indices(images, t1)
 
@@ -83,8 +80,6 @@ class SingleTempDistClassifier(BaseModel):
         t1 = np.random.randint(t0 + tdist, tlen, self._hp.batch_size)
         t0, t1 = torch.from_numpy(t0), torch.from_numpy(t1)
 
-        # im_t0 = torch.index_select(images, 1, t0.cuda())
-        # im_t1 = torch.index_select(images, 1, t1.cuda())
         im_t0 = select_indices(images, t0)
         im_t1 = select_indices(images, t1)
         self.neg_pair = torch.stack([im_t0, im_t1], dim=1)
@@ -127,4 +122,26 @@ def select_indices(tensor, indices):
         new_images.append(tensor[b, indices[b]])
     tensor = torch.stack(new_images, dim=0)
     return tensor
+
+class TesttimeSingleTempDistClassifier(SingleTempDistClassifier):
+    def __init__(self, params, tdist, logger):
+        super().__init__(params, tdist, logger)
+
+    def forward(self, inputs, goal_img):
+        """
+        forward pass at training time
+        :param
+            images shape = batch x channel x height x width
+        :return: model_output
+        """
+
+        image_pairs = torch.cat([inputs, goal_img], dim=1)
+        embeddings = self.encoder(image_pairs)
+        embeddings = self.spatial_softmax(embeddings)
+        logits = self.linear(embeddings)
+        self.out_sigmoid = torch.sigmoid(logits)
+        model_output = AttrDict(logits=logits, out_simoid=self.out_sigmoid)
+        return model_output
+
+
 

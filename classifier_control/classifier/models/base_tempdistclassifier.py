@@ -6,16 +6,16 @@ from classifier_control.classifier.utils.general_utils import AttrDict
 import torch.nn as nn
 from classifier_control.classifier.models.base_model import BaseModel
 from classifier_control.classifier.models.single_tempdistclassifier import SingleTempDistClassifier
+from classifier_control.classifier.models.single_tempdistclassifier import TesttimeSingleTempDistClassifier
 
 
 class BaseTempDistClassifier(BaseModel):
-    def __init__(self, overrideparams, logger):
+    def __init__(self, overrideparams, logger=None):
         super().__init__(logger)
         self._hp = self._default_hparams()
         self.overrideparams = overrideparams
         self.override_defaults(overrideparams)  # override defaults with config file
         self.postprocess_params()
-        self.logger = logger
 
         assert self._hp.batch_size != -1   # make sure that batch size was overridden
 
@@ -29,7 +29,6 @@ class BaseTempDistClassifier(BaseModel):
             'ngf': 4,  # number of feature maps in shallowest level
             'ndist_max': 10, # maximum temporal distance to classify
         })
-        
 
         # add new params to parent params
         parent_params = super()._default_hparams()
@@ -37,12 +36,15 @@ class BaseTempDistClassifier(BaseModel):
             parent_params.add_hparam(k, default_dict[k])
         return parent_params
 
+    @property
+    def singletempdistclassifier(self):
+        return SingleTempDistClassifier
 
     def build_network(self, build_encoder=True):
 
         for i in range(self._hp.ndist_max):
             tdist = i + 1
-            self.tdist_classifiers.append(SingleTempDistClassifier(self.overrideparams, tdist, self._logger))
+            self.tdist_classifiers.append(self.singletempdistclassifier(self.overrideparams, tdist, self._logger))
             self.tdist_classifiers = nn.ModuleList(self.tdist_classifiers)
 
     def forward(self, inputs):
@@ -69,5 +71,15 @@ class BaseTempDistClassifier(BaseModel):
 
 
 class BaseTempDistClassifierTestTime(BaseModel):
-    pass
-    #todo!!
+    def __init__(self, overrideparams, logger=None):
+        super(BaseTempDistClassifierTestTime, self).__init__(overrideparams, logger)
+        checkpoint = torch.load(self._hp.weights_file, map_location=self._hp.device)
+        self.load_state_dict(checkpoint['state_dict'])
+
+    def _default_hparams(self):
+        parent_params = super()._default_hparams()
+        return parent_params.add_hparam('weights_file', None)
+
+    @property
+    def singletempdistclassifier(self):
+        return TesttimeSingleTempDistClassifier
