@@ -18,7 +18,7 @@ configuration = {
 configuration = AttrDict(configuration)
 
 data_config = AttrDict(
-                img_sz=(48, 64),
+                img_sz=(64, 64),
                 sel_len=-1,
                 T=31)
 

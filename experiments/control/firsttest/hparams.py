@@ -1,9 +1,7 @@
 """ Hyperparameters for Large Scale Data Collection (LSDC) """
 import os.path
-from visual_mpc.policy.random.gaussian import GaussianPolicy
-from visual_mpc.agent.general_agent import GeneralAgent
+from visual_mpc.agent.benchmarking_agent import BenchmarkAgent
 from classifier_control.environments.sim.cartgripper.cartgripper_xz import CartgripperXZ
-import numpy as np
 from visual_mpc.policy.cem_controllers.samplers.correlated_noise import CorrelatedNoiseSampler
 
 BASE_DIR = '/'.join(str.split(__file__, '/')[:-1])
@@ -24,29 +22,31 @@ env_params = {
 
 
 agent = {
-    'type': GeneralAgent,
+    'type': BenchmarkAgent,
     'env': (CartgripperXZ, env_params),
     'T': 30,
     'gen_xml': (True, 20),  # whether to generate xml, and how often
-    'make_final_gif_freq':100
+    'make_final_gif_freq':10,
+    'start_goal_confs': os.environ['VMPC_DATA'] + '/classifier_control/data_collection/sim/1_obj_cartgripper_xz_startgoal/raw',
+    'num_load_steps':30
 }
 
 classifer_params = {
-    'classifier_restore_path': os.environ['VMPC_EXP'] + '/classifier/towel_exp/base_model/model-80000',
+    # 'classifier_restore_path': os.environ['VMPC_EXP'] + '/classifier_control/classifier_training/classifier_training/conf.py/weights/weights_ep299.pth',
+    'classifier_restore_path': os.environ['VMPC_EXP'] + '/classifier_control/classifier_training/classifier_training/conf.py/weights/weights_ep0.pth',
 }
 
 policy = {
     'type': PytorchClassifierController,
-    'replan_interval': 15,
-    'num_samples': 600,
+    'replan_interval': 13,
+    'nactions': 13,
+    # 'num_samples': 200,
     'selection_frac': 0.05,
     'sampler': CorrelatedNoiseSampler,
     'initial_std': [0.05, 0.05],
     'classifier_params': classifer_params,
     'verbose_every_iter': True,
-    # "model_params_path": os.environ['VMPC_EXP'] + "/classifier_control/vidpred_training/classifier_control/video_prediction_training/experiment_state-2019-08-13_16-56-42.json",
-    # "model_path": os.environ['VMPC_EXP'] + "/classifier_control/vidpred_training/classifier_control/video_prediction_training/HDF5TrainableInterface_0_5324d7c6_2019-08-13_16-56-424fsoe8ps",
-    "model_path": '/nfs/kun1/users/febert/data/vmpc_exp/classifier_control/vidpred_training/classifier_control/video_prediction_training/HDF5TrainableInterface_0_5324d7c6_2019-08-13_16-56-424fsoe8ps/checkpoint_30000',
+    "model_path": os.environ['VMPC_EXP'] + '/classifier_control/vidpred_training/docker_training/HDF5TrainableInterface_0_edf90eee_2019-11-22_04-38-28qp2v6u6q/checkpoint_65000',
 }
 
 config = {

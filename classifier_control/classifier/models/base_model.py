@@ -13,6 +13,7 @@ class BaseModel(nn.Module):
     def __init__(self, logger):
         super().__init__()
         self._hp = self._default_hparams()
+        print('hp', self._hp)
         self._logger = logger
 
     def override_defaults(self, params):

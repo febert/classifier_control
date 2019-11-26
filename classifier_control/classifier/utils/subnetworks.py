@@ -39,7 +39,7 @@ class ConvEncoder(nn.Module):
         super().__init__()
         self._hp = hp
 
-        self.n = hp.builder.get_num_layers(hp.img_sz)
+        self.n = hp.builder.get_num_layers(hp.img_sz) - 1
         self.net = GetIntermediatesSequential(hp.skips_stride) if hp.use_skips else nn.Sequential()
 
         print('l-1: indim {} outdim {}'.format(hp.input_nc*2, hp.ngf))
@@ -60,7 +60,7 @@ class ConvEncoder(nn.Module):
 
     def get_output_size(self):
         # return (self._hp.nz_enc, self._hp.img_sz[0]//(2**self.n), self._hp.img_sz[1]//(2**self.n))
-        return (64, 3, 5)   # todo calc this, fix the padding in the convs!
+        return (64, 5, 5)   # todo calc this, fix the padding in the convs!
 
     def forward(self, input):
         return self.net(input)

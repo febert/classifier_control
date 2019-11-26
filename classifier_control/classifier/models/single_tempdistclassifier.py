@@ -28,6 +28,7 @@ class SingleTempDistClassifier(BaseModel):
             'use_skips':False, #todo try resnet architecture!
             'ngf': 8,
             'nz_enc': 64,
+            'classifier_restore_path':None  # not really needed here.
         })
 
         # add new params to parent params
@@ -69,6 +70,10 @@ class SingleTempDistClassifier(BaseModel):
         t1 = t0 + 1 + np.random.randint(0, tdist, self._hp.batch_size)
         t0, t1 = torch.from_numpy(t0), torch.from_numpy(t1)
 
+        # print('t0', t0)
+        # print('t1', t1)
+        # print('t1 - t0', t1 - t0)
+
         im_t0 = select_indices(images, t0)
         im_t1 = select_indices(images, t1)
 
@@ -77,8 +82,14 @@ class SingleTempDistClassifier(BaseModel):
 
         # get negatives:
         t0 = np.random.randint(0, tlen - tdist - 1, self._hp.batch_size)
-        t1 = np.random.randint(t0 + tdist, tlen, self._hp.batch_size)
+        t1 = [np.random.randint(t0[b] + tdist + 1, tlen, 1) for b in range(self._hp.batch_size)]
+        t1 = np.array(t1).squeeze()
         t0, t1 = torch.from_numpy(t0), torch.from_numpy(t1)
+
+        # print('--------------')
+        # print('t0', t0)
+        # print('t1', t1)
+        # print('t1 - t0', t1 - t0)
 
         im_t0 = select_indices(images, t0)
         im_t1 = select_indices(images, t1)

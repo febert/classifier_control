@@ -8,8 +8,18 @@ from collections import OrderedDict
 from classifier_control.classifier.models.base_tempdistclassifier import BaseTempDistClassifierTestTime
 
 from robonet.video_prediction.testing import VPredEvaluation
+import torch
 
 LOG_SHIFT = 1e-5
+
+import cv2
+
+def resample_imgs(images, img_size):
+    resized_images = np.zeros([images.shape[0], 1, img_size[0], img_size[1], 3], dtype=np.uint8)
+    for t in range(images.shape[0]):
+        resized_images[t] = \
+        cv2.resize(images[t].squeeze(), (img_size[1], img_size[0]), interpolation=cv2.INTER_CUBIC)[None]
+    return resized_images
 
 class PytorchClassifierController(CEMBaseController):
     """
@@ -28,13 +38,17 @@ class PytorchClassifierController(CEMBaseController):
         predictor_hparams = {}
         predictor_hparams['run_batch_size'] = min(self._hp.vpred_batch_size, self._hp.num_samples)
         self.predictor = VPredEvaluation(self._hp.model_path, predictor_hparams, n_gpus=ngpu, first_gpu=gpu_id)
-        self.predictor.restore()
+        self.predictor.restore(gpu_mem_limit=True)
         self._net_context = self.predictor.n_context
         if self._hp.start_planning < self._net_context - 1:
             self._hp.start_planning = self._net_context - 1
 
-        self._hp.classifier_params['batch_size'] = self._hp['num_samples']
-        self._scoring_func = BaseTempDistClassifierTestTime(self._hp.classifier_params)
+        self.img_sz = self.predictor._input_hparams['img_size']
+
+        self._hp.classifier_params['batch_size'] = self._hp.num_samples
+        self._hp.classifier_params['data_conf'] = {'img_sz': self.img_sz}  #todo currently uses 64x64!!
+        self.scoring_func = BaseTempDistClassifierTestTime(self._hp.classifier_params)
+        self.device = self.scoring_func.get_device()
 
         self._net_context = self.predictor.n_context
         if self._hp.start_planning < self._net_context - 1:
@@ -47,9 +61,6 @@ class PytorchClassifierController(CEMBaseController):
         self._desig_pix = None
         self._goal_pix = None
         self._images = None
-
-        if self._hp.predictor_propagation:
-            self._chosen_distrib = None  # record the input distributions
 
         self._goal_image = None
         self._start_image = None
@@ -85,27 +96,31 @@ class PytorchClassifierController(CEMBaseController):
     def evaluate_rollouts(self, actions, cem_itr):
         previous_actions = np.concatenate([x[None] for x in self._sampler.chosen_actions[-self._net_context:]], axis=0)
         previous_actions = np.tile(previous_actions, [actions.shape[0], 1, 1])
-        input_actions = np.concatenate((previous_actions, actions), axis=1)[:, :self._seqlen]
+        # input_actions = np.concatenate((previous_actions, actions), axis=1)[:, :self.predictor.sequence_length]
 
+        resampled_imgs = resample_imgs(self._images, self.img_sz)
         last_frames, last_states = get_context(self._net_context, self._t,
-                                               self._state, self._images, self._hp)
+                                               self._state, resampled_imgs, self._hp)
+        context = {
+            "context_frames": last_frames[0],  #only take first batch example
+            "context_actions": previous_actions[0],
+            "context_states": last_states[0]
+        }
+        prediction_dict = self.predictor(context, {'actions': actions})
+        gen_images = prediction_dict['predicted_frames']
 
-        gen_images = rollout_predictions(self._predictor, self._vpred_bsize, input_actions,
-                                         last_frames, last_states, logger=self._logger)[0]
-        import pdb; pdb.set_trace()
-
-        raw_scores = np.zeros((self._n_cam, actions.shape[0], self._n_pred))
-        for c in range(self._n_cam):
-
-            # input_images = gen_images[:, :, c].reshape((-1, self._img_height, self._img_width, 3)) / 255
-            input_images = self.ten2pytrch(gen_images)
-
-            logits = self._scoring_func(input_images)
+        for t in range(gen_images.shape[1]):
+            input_images = ten2pytrch(gen_images[:, t], self.device)
             import pdb; pdb.set_trace()
-            logits = logits.reshape((actions.shape[0], self._n_pred, 2))
-            raw_scores[c] = -np.log(logits[:, :, 1] + LOG_SHIFT)
 
-        raw_scores = np.sum(raw_scores, axis=0)
+            logits = self.scoring_func(input_images, uint2pytorch(self._goal_image, self._hp.num_samples, self.device))
+            import pdb; pdb.set_trace()
+            raw_scores = -np.log(logits[:, :, 1] + LOG_SHIFT)
+
+            # average of temporal distance classifiers
+            raw_scores = np.mean(raw_scores, axis=2)
+
+        # weight final time step by some number and average over time.
         scores = self._weight_scores(raw_scores)
 
         if self._verbose_condition(cem_itr):
@@ -146,8 +161,23 @@ class PytorchClassifierController(CEMBaseController):
         return scores
 
 
-    def act(self, t=None, i_tr=None, images=None, state=None, verbose_worker=None):
+    def act(self, t=None, i_tr=None, images=None, goal_image=None, verbose_worker=None, state=None):
         self._images = images
         self._verbose_worker = verbose_worker
+        self._goal_image = goal_image
 
         return super(PytorchClassifierController, self).act(t, i_tr, state)
+
+
+def ten2pytrch(img, device):
+    """Converts images to the [-1...1] range of the hierarchical planner."""
+    img = img[:, 0]
+    img = np.transpose(img, [0, 3, 1, 2])
+    return torch.from_numpy(img * 2 - 1.0).float().to(device)
+
+def uint2pytorch(img, num_samples, device):
+    import pdb; pdb.set_trace()
+    img = np.tile(img[None], [num_samples, 1, 1])
+    img = np.transpose(img, [0, 3, 1, 2])
+    return torch.from_numpy(img * 2 - 1.0).float().to(device)
+

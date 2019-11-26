@@ -221,15 +221,16 @@ class ModelTrainer(BaseTrainer):
     
     def train(self, start_epoch):
         for epoch in range(start_epoch, self._hp.num_epochs):
-            self.val(not (epoch - start_epoch) % 3)
-            self.train_epoch(epoch)
+            if epoch > start_epoch:
+                self.val(not (epoch - start_epoch) % 3)
             save_checkpoint({
                 'epoch': epoch,
                 'global_step': self.global_step,
                 'state_dict': self.model.state_dict(),
                 'optimizer': self.optimizer.state_dict(),
             },  os.path.join(self._hp.exp_path, 'weights'), CheckpointHandler.get_ckpt_name(epoch))
-            
+            self.train_epoch(epoch)
+
     @property
     def log_images_now(self):
         return self.global_step % self.log_images_interval == 0

@@ -41,11 +41,10 @@ class BaseTempDistClassifier(BaseModel):
         return SingleTempDistClassifier
 
     def build_network(self, build_encoder=True):
-
         for i in range(self._hp.ndist_max):
             tdist = i + 1
             self.tdist_classifiers.append(self.singletempdistclassifier(self.overrideparams, tdist, self._logger))
-            self.tdist_classifiers = nn.ModuleList(self.tdist_classifiers)
+        self.tdist_classifiers = nn.ModuleList(self.tdist_classifiers)
 
     def forward(self, inputs):
         """
@@ -69,16 +68,20 @@ class BaseTempDistClassifier(BaseModel):
         losses.total_loss = torch.stack(list(losses.values())).sum()
         return losses
 
+    def get_device(self):
+        return self._hp.device
 
-class BaseTempDistClassifierTestTime(BaseModel):
+
+class BaseTempDistClassifierTestTime(BaseTempDistClassifier):
     def __init__(self, overrideparams, logger=None):
         super(BaseTempDistClassifierTestTime, self).__init__(overrideparams, logger)
-        checkpoint = torch.load(self._hp.weights_file, map_location=self._hp.device)
+        checkpoint = torch.load(self._hp.classifier_restore_path, map_location=self._hp.device)
         self.load_state_dict(checkpoint['state_dict'])
 
     def _default_hparams(self):
         parent_params = super()._default_hparams()
-        return parent_params.add_hparam('weights_file', None)
+        parent_params.add_hparam('classifier_restore_path', None)
+        return parent_params
 
     @property
     def singletempdistclassifier(self):
