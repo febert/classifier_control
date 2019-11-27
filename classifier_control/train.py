@@ -90,18 +90,20 @@ class ModelTrainer(BaseTrainer):
         model_conf['device'] = self.device.type
         model_conf['data_conf'] = data_conf
         
-        def build_phase(logger, ModelClass, phase, n_repeat=1, dataset_size=-1):
+        def build_phase(logger, ModelClass, phase):
             logger = logger(log_dir, summary_writer=writer)
             model = ModelClass(model_conf, logger)
             model.to(self.device)
             model.device = self.device
-            loader = FixLenVideoDataset(self._hp.data_dir, model._hp, data_conf).get_data_loader(self._hp.batch_size)
+            loader = FixLenVideoDataset(self._hp.data_dir, model._hp, data_conf, phase, shuffle=True).get_data_loader(self._hp.batch_size)
             return logger, model, loader
 
-        self.logger, self.model, self.train_loader = build_phase(self._hp.logger, self._hp.model, 'train',
-                                                                 n_repeat=self._hp.epoch_cycles_train)
+        self.logger, self.model, self.train_loader = build_phase(self._hp.logger, self._hp.model, 'train')
         self.logger_test, self.model_test, self.val_loader = \
-            build_phase(self._hp.logger, self._hp.model, 'val', dataset_size=args.val_data_size)
+            build_phase(self._hp.logger, self._hp.model, 'val')
+
+        print('len train dataset', len(self.train_loader))
+        print('len val dataset', len(self.val_loader))
 
         self.optimizer = Adam(self.model.parameters(), lr=self._hp.lr)
         # self.optimizer = self.get_optimizer_class()(self.model.parameters(), lr=self._hp.lr)
@@ -119,7 +121,7 @@ class ModelTrainer(BaseTrainer):
                 self.resume(epoch)
                 self.val()
             return
-        
+
         ## Train
         if args.train:
             self.train(start_epoch)
@@ -156,7 +158,9 @@ class ModelTrainer(BaseTrainer):
         
         if args.gpu != -1:
             os.environ["CUDA_VISIBLE_DEVICES"] = str(args.gpu)
-        
+        else:
+            os.environ["CUDA_VISIBLE_DEVICES"] = str(0)
+
         return args, conf_module, conf, model_conf, data_conf, exp_dir, conf_path
     
     def get_trainer_args(self):
@@ -250,7 +254,7 @@ class ModelTrainer(BaseTrainer):
         self.log_images_interval = int(epoch_len / self.args.imepoch)
         
         print('starting epoch ', epoch)
-        
+
         for self.batch_idx, sample_batched in enumerate(self.train_loader):
             data_load_time.update(time.time() - end)
             inputs = AttrDict(map_dict(lambda x: x.to(self.device), sample_batched))

@@ -16,7 +16,7 @@ env_params = {
     'viewer_image_height': 192,
     'viewer_image_width': 256,
     'cube_objects': True,
-    'num_objects': 3,
+    'num_objects': 1,
     'object_object_mindist':0.2,
 }
 
@@ -28,7 +28,8 @@ agent = {
     'gen_xml': (True, 20),  # whether to generate xml, and how often
     'make_final_gif_freq':10,
     'start_goal_confs': os.environ['VMPC_DATA'] + '/classifier_control/data_collection/sim/1_obj_cartgripper_xz_startgoal/raw',
-    'num_load_steps':30
+    'num_load_steps':30,
+     'use_save_thread': True
 }
 
 classifer_params = {

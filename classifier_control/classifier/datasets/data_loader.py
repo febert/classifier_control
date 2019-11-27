@@ -79,6 +79,9 @@ class FixLenVideoDataset(BaseVideoDataset):
         self.flatten_im = False
         self.filter_repeated_tail = False
 
+        print(phase)
+        print(len(self.filenames))
+
     def _get_filenames(self):
         assert 'hdf5' not in self.data_dir, "hdf5 most not be containted in the data dir!"
         filenames = sorted(glob.glob(os.path.join(self.data_dir, os.path.join('hdf5', self.phase) + '/*')))

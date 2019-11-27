@@ -2,7 +2,7 @@ from visual_mpc.policy.cem_controllers import CEMBaseController
 import imp
 import numpy as np
 from visual_mpc.video_prediction.pred_util import get_context, rollout_predictions
-from visual_mpc.policy.cem_controllers.visualizer.construct_html import save_gifs, save_html, save_img, fill_template, img_entry_html
+from visual_mpc.policy.cem_controllers.visualizer.construct_html import save_gifs, save_html, save_img, fill_template, img_entry_html, save_imgs
 from collections import OrderedDict
 
 from classifier_control.classifier.models.base_tempdistclassifier import BaseTempDistClassifierTestTime
@@ -15,11 +15,14 @@ LOG_SHIFT = 1e-5
 import cv2
 
 def resample_imgs(images, img_size):
-    resized_images = np.zeros([images.shape[0], 1, img_size[0], img_size[1], 3], dtype=np.uint8)
-    for t in range(images.shape[0]):
-        resized_images[t] = \
-        cv2.resize(images[t].squeeze(), (img_size[1], img_size[0]), interpolation=cv2.INTER_CUBIC)[None]
-    return resized_images
+    if len(images.shape) == 5:
+        resized_images = np.zeros([images.shape[0], 1, img_size[0], img_size[1], 3], dtype=np.uint8)
+        for t in range(images.shape[0]):
+            resized_images[t] = \
+            cv2.resize(images[t].squeeze(), (img_size[1], img_size[0]), interpolation=cv2.INTER_CUBIC)[None]
+        return resized_images
+    elif len(images.shape) == 3:
+        return cv2.resize(images, (img_size[1], img_size[0]), interpolation=cv2.INTER_CUBIC)
 
 class PytorchClassifierController(CEMBaseController):
     """
@@ -109,19 +112,27 @@ class PytorchClassifierController(CEMBaseController):
         prediction_dict = self.predictor(context, {'actions': actions})
         gen_images = prediction_dict['predicted_frames']
 
-        for t in range(gen_images.shape[1]):
-            input_images = ten2pytrch(gen_images[:, t], self.device)
-            import pdb; pdb.set_trace()
+        scores = []
+        sigmoids = []
 
-            logits = self.scoring_func(input_images, uint2pytorch(self._goal_image, self._hp.num_samples, self.device))
-            import pdb; pdb.set_trace()
-            raw_scores = -np.log(logits[:, :, 1] + LOG_SHIFT)
+        for tpred in range(gen_images.shape[1]):
+            input_images = ten2pytrch(gen_images[:, tpred], self.device)
+            outputs = self.scoring_func({'current_img': input_images,
+                                        'goal_img': uint2pytorch(resample_imgs(self._goal_image, self.img_sz), self._hp.num_samples, self.device)})
 
-            # average of temporal distance classifiers
-            raw_scores = np.mean(raw_scores, axis=2)
+            sigmoid = np.zeros([self._hp.num_samples, self.scoring_func._hp.ndist_max])
+            for i in range(self.scoring_func._hp.ndist_max):
+                sigmoid[:, i] = outputs[i].out_simoid.data.cpu().numpy().squeeze()
+            sigmoids.append(sigmoid)
+
+            # compute probability of being more than k steps away from goal
+            prob_outside_k = 1-sigmoid
+            scores.append(np.mean(prob_outside_k, 1))
 
         # weight final time step by some number and average over time.
-        scores = self._weight_scores(raw_scores)
+        scores = np.stack(scores, 1)
+        scores = self._weight_scores(scores)
+        sigmoids = np.stack(sigmoids, 1)
 
         if self._verbose_condition(cem_itr):
             verbose_folder = "planning_{}_itr_{}".format(self._t, cem_itr)
@@ -141,10 +152,16 @@ class PytorchClassifierController(CEMBaseController):
                 content_dict[row_name] = save_gifs(self._verbose_worker, verbose_folder,
                                                        row_name, verbose_images)
 
+            # save classifier preds
+            sel_sigmoids = sigmoids[visualize_indices]
+
+            sigmoid_images = visualize_sigmoids(sel_sigmoids)
+            row_name = 'sigmoid_images'
+            content_dict[row_name] = save_imgs(self._verbose_worker, verbose_folder,
+                                               row_name, sigmoid_images)
+
             # save scores
             content_dict['scores'] = scores[visualize_indices]
-            html_page = fill_template(cem_itr, self._t, content_dict, img_height=self._hp.verbose_img_height)
-            save_html(self._verbose_worker, "{}/plan.html".format(verbose_folder), html_page)
 
             html_page = fill_template(cem_itr, self._t, content_dict, img_height=self._hp.verbose_img_height)
             save_html(self._verbose_worker, "{}/plan.html".format(verbose_folder), html_page)
@@ -155,7 +172,7 @@ class PytorchClassifierController(CEMBaseController):
         if self._hp.finalweight >= 0:
             scores = raw_scores.copy()
             scores[:, -1] *= self._hp.finalweight
-            scores = np.sum(scores, axis=1) / sum([1. for _ in range(self._n_pred - 1)] + [self._hp.finalweight])
+            scores = np.sum(scores, axis=1) / sum([1. for _ in range(self.predictor.horizon - 1)] + [self._hp.finalweight])
         else:
             scores = raw_scores[:, -1].copy()
         return scores
@@ -164,7 +181,7 @@ class PytorchClassifierController(CEMBaseController):
     def act(self, t=None, i_tr=None, images=None, goal_image=None, verbose_worker=None, state=None):
         self._images = images
         self._verbose_worker = verbose_worker
-        self._goal_image = goal_image
+        self._goal_image = goal_image[-1, 0]  # pick the last time step as the goal image
 
         return super(PytorchClassifierController, self).act(t, i_tr, state)
 
@@ -176,8 +193,30 @@ def ten2pytrch(img, device):
     return torch.from_numpy(img * 2 - 1.0).float().to(device)
 
 def uint2pytorch(img, num_samples, device):
-    import pdb; pdb.set_trace()
-    img = np.tile(img[None], [num_samples, 1, 1])
+    img = np.tile(img[None], [num_samples, 1, 1, 1])
     img = np.transpose(img, [0, 3, 1, 2])
     return torch.from_numpy(img * 2 - 1.0).float().to(device)
+
+import matplotlib.pyplot as plt
+
+def visualize_sigmoids(sigmoids):
+    imgs = []
+    for b in range(sigmoids.shape[0]):
+        fig = plt.figure()
+        plt.bar(sigmoids[b])
+        imgs.append(fig)
+    return imgs
+
+from PIL import Image
+
+def fig2img(fig):
+    """Converts a given figure handle to a 3-channel numpy image array."""
+    fig.canvas.draw()
+    w, h = fig.canvas.get_width_height()
+    buf = np.fromstring(fig.canvas.tostring_argb(), dtype=np.uint8)
+    buf.shape = (w, h, 4)
+    buf = np.roll(buf, 3, axis=2)
+    w, h, d = buf.shape
+    return np.array(Image.frombytes("RGBA", (w, h), buf.tostring()), dtype=np.float32)[:, :, :3] / 255.
+
 

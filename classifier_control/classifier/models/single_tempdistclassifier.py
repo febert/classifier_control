@@ -138,7 +138,7 @@ class TesttimeSingleTempDistClassifier(SingleTempDistClassifier):
     def __init__(self, params, tdist, logger):
         super().__init__(params, tdist, logger)
 
-    def forward(self, inputs, goal_img):
+    def forward(self, inputs):
         """
         forward pass at training time
         :param
@@ -146,7 +146,7 @@ class TesttimeSingleTempDistClassifier(SingleTempDistClassifier):
         :return: model_output
         """
 
-        image_pairs = torch.cat([inputs, goal_img], dim=1)
+        image_pairs = torch.cat([inputs['current_img'], inputs['goal_img']], dim=1)
         embeddings = self.encoder(image_pairs)
         embeddings = self.spatial_softmax(embeddings)
         logits = self.linear(embeddings)

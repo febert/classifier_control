@@ -116,7 +116,7 @@ class TdistClassifierLogger(Logger):
 
             numbers = get_sigmoid_annotations(scores)
 
-            return np.concatenate([first_row, second_row, numbers], 1)
+            return (np.concatenate([first_row, second_row, numbers], 1) + 1.)/2.0
 
         def get_sigmoid_annotations(pred_scores):
             text_images = []
@@ -125,6 +125,7 @@ class TdistClassifierLogger(Logger):
             return np.concatenate(text_images, 2)
 
         positives_image = image_row(pos_pair, pos_pred)
+        # import pdb; pdb.set_trace()
         self._summ_writer.add_image('{}_{}'.format(name + '_positives', phase), positives_image, step)
 
         positives_image = image_row(neg_pair, neg_pred)
