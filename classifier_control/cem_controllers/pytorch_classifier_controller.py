@@ -120,10 +120,10 @@ class PytorchClassifierController(CEMBaseController):
             outputs = self.scoring_func({'current_img': input_images,
                                         'goal_img': uint2pytorch(resample_imgs(self._goal_image, self.img_sz), self._hp.num_samples, self.device)})
 
-            sigmoid = np.zeros([self._hp.num_samples, self.scoring_func._hp.ndist_max])
+            sigmoid = []
             for i in range(self.scoring_func._hp.ndist_max):
-                sigmoid[:, i] = outputs[i].out_simoid.data.cpu().numpy().squeeze()
-            sigmoids.append(sigmoid)
+                sigmoid.append(outputs[i].out_simoid.data.cpu().numpy().squeeze())
+            sigmoids = np.stack(sigmoid, axis=1)
 
             # compute probability of being more than k steps away from goal
             prob_outside_k = 1-sigmoid

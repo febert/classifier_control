@@ -95,15 +95,15 @@ class ModelTrainer(BaseTrainer):
             model = ModelClass(model_conf, logger)
             model.to(self.device)
             model.device = self.device
-            loader = FixLenVideoDataset(self._hp.data_dir, model._hp, data_conf, phase, shuffle=True).get_data_loader(self._hp.batch_size)
-            return logger, model, loader
+            if phase is not 'test':
+                loader = FixLenVideoDataset(self._hp.data_dir, model._hp, data_conf, phase, shuffle=True).get_data_loader(self._hp.batch_size)
+                return model, loader
+            else:
+                return model
 
-        self.logger, self.model, self.train_loader = build_phase(self._hp.logger, self._hp.model, 'train')
-        self.logger_test, self.model_test, self.val_loader = \
-            build_phase(self._hp.logger, self._hp.model, 'val')
-
-        print('len train dataset', len(self.train_loader))
-        print('len val dataset', len(self.val_loader))
+        self.model, self.train_loader = build_phase(self._hp.logger, self._hp.model, 'train')
+        self.model_val, self.val_loader = build_phase(self._hp.logger, self._hp.model, 'val')
+        self.model_test = build_phase(self._hp.logger, self._hp.model_test, 'test')
 
         self.optimizer = Adam(self.model.parameters(), lr=self._hp.lr)
         # self.optimizer = self.get_optimizer_class()(self.model.parameters(), lr=self._hp.lr)
@@ -293,15 +293,17 @@ class ModelTrainer(BaseTrainer):
         print('Running Testing')
         if self.args.test_prediction:
             start = time.time()
+            self.model_val.load_state_dict(self.model.state_dict())
             self.model_test.load_state_dict(self.model.state_dict())
             losses_meter = RecursiveAverageMeter()
-            # self.model_test.eval()
             with autograd.no_grad():
                 for batch_idx, sample_batched in enumerate(self.val_loader):
                     inputs = AttrDict(map_dict(lambda x: x.to(self.device), sample_batched))
 
-                    output = self.model_test(inputs)
-                    losses = self.model_test.loss(inputs, output)
+                    output = self.model_val(inputs)
+                    losses = self.model_val.loss(inputs, output)
+
+                    run_through_traj(self.model_test, inputs)
 
                     losses_meter.update(losses)
                     del losses
@@ -310,7 +312,7 @@ class ModelTrainer(BaseTrainer):
                     print("Finished Evaluation! Exiting...")
                     exit(0)
 
-                self.model_test.log_outputs(
+                self.model_val.log_outputs(
                     output, inputs, losses_meter.avg, self.global_step, log_images=True, phase='val')
                 print(('\nTest set: Average loss: {:.4f} in {:.2f}s\n'
                        .format(losses_meter.avg.total_loss.item(), time.time() - start)))
@@ -326,6 +328,23 @@ class ModelTrainer(BaseTrainer):
 
 def save_config(conf_path, exp_conf_path):
     copy(conf_path, exp_conf_path)
+
+
+def run_through_traj(inputs, test_model):
+    images = inputs.demo_seq_images
+
+    for t in range(images.shape[0]):
+        outputs = test_model({'current_img':images, 'goal_img':images[:, -1]})
+
+        sigmoid = []
+        for i in range(len(outputs)):
+            sigmoid.append(outputs[i].out_simoid.data.cpu().numpy().squeeze())
+        sigmoids = np.stack(sigmoid, axis=1)
+
+
+    
+
+
 
         
 if __name__ == '__main__':
