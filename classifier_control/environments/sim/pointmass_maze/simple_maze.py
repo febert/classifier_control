@@ -53,10 +53,12 @@ class SimpleMaze(BaseMujocoEnv):
     return self._get_obs(), None
 
   def step(self, action):
+    self.sim.data.qvel[:] = 0
     self.sim.data.ctrl[:] = action
     for _ in range(500):
       self.sim.step()
     obs = self._get_obs()
+    self.sim.data.qvel[:] = 0
     return obs
   
   def render(self):
