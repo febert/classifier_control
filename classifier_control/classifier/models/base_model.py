@@ -60,12 +60,12 @@ class BaseModel(nn.Module):
     def forward(self, inputs):
         raise NotImplementedError("Need to implement this function in the subclass!")
 
-    def loss(self, inputs, model_output):
+    def loss(self, model_output):
         raise NotImplementedError("Need to implement this function in the subclass!")
 
     def log_outputs(self, model_output, inputs, losses, step, log_images, phase):
         # Log generally useful outputs
-        self._log_losses(losses, step, log_images, phase)
+        self._log_losses(losses, step, phase)
 
         if phase == 'train':
             self.log_gradients(step, phase)
@@ -74,7 +74,7 @@ class BaseModel(nn.Module):
             if hasattr(module, '_log_outputs'):
                 module._log_outputs(model_output, inputs, losses, step, log_images, phase)
 
-    def _log_losses(self, losses, step, log_images, phase):
+    def _log_losses(self, losses, step, phase):
         for name, loss in losses.items():
             self._logger.log_scalar(loss, name, step, phase)
 

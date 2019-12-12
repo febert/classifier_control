@@ -119,7 +119,7 @@ class QFunction(BaseModel):
         return pos_pair_cat, neg_pair_cat, pos_act, neg_act
 
 
-    def loss(self, inputs, model_output):
+    def loss(self, model_output):
         if self._hp.low_dim:
             image_pairs = self.images[:, 2:]
         else:

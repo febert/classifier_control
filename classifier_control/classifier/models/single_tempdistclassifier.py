@@ -21,7 +21,6 @@ class SingleTempDistClassifier(BaseModel):
 
         self.tdist = tdist
         self.build_network()
-        self._use_pred_length = False
 
     def _default_hparams(self):
         default_dict = AttrDict({
@@ -101,7 +100,7 @@ class SingleTempDistClassifier(BaseModel):
 
         return pos_pair_cat, neg_pair_cat
 
-    def loss(self, model_inputs, model_output):
+    def loss(self, model_output):
         logits_ = model_output.logits[:, 0]
         return self.cross_ent_loss(logits_, self.labels.to(self._hp.device))
 

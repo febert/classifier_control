@@ -1,5 +1,6 @@
 from contextlib import contextmanager
 import numpy as np
+import cv2
 import pdb
 import torch
 from classifier_control.classifier.utils.general_utils import AttrDict
@@ -59,10 +60,10 @@ class BaseTempDistClassifier(BaseModel):
         return model_output
 
 
-    def loss(self, inputs, model_output):
+    def loss(self, model_output):
         losses = AttrDict()
         for i_cl, cl in enumerate(self.tdist_classifiers):
-            setattr(losses, 'tdist{}'.format(cl.tdist), cl.loss(inputs, model_output[i_cl]))
+            setattr(losses, 'tdist{}'.format(cl.tdist), cl.loss(model_output[i_cl]))
 
         # compute total loss
         losses.total_loss = torch.stack(list(losses.values())).sum()
@@ -72,11 +73,18 @@ class BaseTempDistClassifier(BaseModel):
         return self._hp.device
 
 
+from classifier_control.classifier.utils.vis_utils import visualize_barplot_array
+
 class BaseTempDistClassifierTestTime(BaseTempDistClassifier):
-    def __init__(self, overrideparams, logger=None):
+    def __init__(self, overrideparams, logger=None, restore_from_disk=True):
         super(BaseTempDistClassifierTestTime, self).__init__(overrideparams, logger)
-        checkpoint = torch.load(self._hp.classifier_restore_path, map_location=self._hp.device)
-        self.load_state_dict(checkpoint['state_dict'])
+        if self._hp.classifier_restore_path is not None:
+            checkpoint = torch.load(self._hp.classifier_restore_path, map_location=self._hp.device)
+            self.load_state_dict(checkpoint['state_dict'])
+        else:
+            print('#########################')
+            print("Warning Classifier weights not restored during init!!")
+            print('#########################')
 
     def _default_hparams(self):
         parent_params = super()._default_hparams()
@@ -86,3 +94,38 @@ class BaseTempDistClassifierTestTime(BaseTempDistClassifier):
     @property
     def singletempdistclassifier(self):
         return TesttimeSingleTempDistClassifier
+
+    def vis_dist_over_traj(self, inputs, step):
+        images = inputs.demo_seq_images
+
+        cols = []
+        n_ex = 10
+        
+        for t in range(images.shape[1]):
+            outputs = self.forward({'current_img': images[:,t], 'goal_img': images[:, -1]})
+
+            sigmoid = []
+            for i in range(len(outputs)):
+                sigmoid.append(outputs[i].out_simoid.data.cpu().numpy().squeeze())
+            sigmoids = np.stack(sigmoid, axis=1)
+
+            sig_img_t = visualize_barplot_array(sigmoids[:n_ex])
+
+            img_column_t = []
+            images_npy = images.data.cpu().numpy().squeeze()
+            for b in range(n_ex):
+                img_column_t.append(ptrch2uint8(images_npy[b, t]))
+                img_column_t.append(np.transpose(sig_img_t[b], [2,0,1]))
+            img_column_t = np.concatenate(img_column_t, axis=1)
+            cols.append(img_column_t)
+
+        image = np.concatenate(cols, axis=2)
+        # cv2.imwrite('/nfs/kun1/users/febert/data/vmpc_exp/dist_over_traj.png', np.transpose(image, [1,2,0]))
+        self._logger.log_image(image, 'dist_over_traj', step, phase='test')
+        self._logger.log_video(np.stack(cols, axis=0), 'dist_over_traj_gif', step, phase='test')
+
+        print('logged dist over traj')
+
+
+def ptrch2uint8(img):
+    return ((img + 1)/2*255.).astype(np.uint8)

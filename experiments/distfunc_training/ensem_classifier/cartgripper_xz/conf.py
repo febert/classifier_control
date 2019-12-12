@@ -3,12 +3,14 @@ from classifier_control.classifier.utils.general_utils import AttrDict
 from classifier_control.classifier.utils.logger import TdistClassifierLogger
 current_dir = os.path.dirname(os.path.realpath(__file__))
 from classifier_control.classifier.models.base_tempdistclassifier import BaseTempDistClassifier
+from classifier_control.classifier.models.base_tempdistclassifier import BaseTempDistClassifierTestTime
 # from experiments.control.sim.multiroom2d import env_benchmark_conf
 
 import imp
 
 configuration = {
     'model': BaseTempDistClassifier,
+    'model_test': BaseTempDistClassifierTestTime,
     'logger': TdistClassifierLogger,
     'data_dir': os.environ['VMPC_DATA'] + '/classifier_control/data_collection/sim/1_obj_cartgripper_xz_rejsamp',       # 'directory containing data.' ,
     'batch_size' : 32,

@@ -31,7 +31,7 @@ def save_checkpoint(state, folder, filename='checkpoint.pth'):
 
 
 def get_exp_dir():
-    return os.environ['VMPC_EXP'] + '/classifier_control/classifier_training'
+    return os.environ['VMPC_EXP'] + '/classifier_control/distfunc_training'
 
 
 def datetime_str():
@@ -103,7 +103,8 @@ class ModelTrainer(BaseTrainer):
 
         self.model, self.train_loader = build_phase(self._hp.logger, self._hp.model, 'train')
         self.model_val, self.val_loader = build_phase(self._hp.logger, self._hp.model, 'val')
-        self.model_test = build_phase(self._hp.logger, self._hp.model_test, 'test')
+        if self._hp.model_test is not None:
+            self.model_test = build_phase(self._hp.logger, self._hp.model_test, 'test')
 
         self.optimizer = Adam(self.model.parameters(), lr=self._hp.lr)
         # self.optimizer = self.get_optimizer_class()(self.model.parameters(), lr=self._hp.lr)
@@ -252,7 +253,7 @@ class ModelTrainer(BaseTrainer):
         data_load_time = AverageMeter()
         self.log_outputs_interval = 10
         self.log_images_interval = int(epoch_len / self.args.imepoch)
-        
+
         print('starting epoch ', epoch)
 
         for self.batch_idx, sample_batched in enumerate(self.train_loader):
@@ -261,7 +262,7 @@ class ModelTrainer(BaseTrainer):
 
             self.optimizer.zero_grad()
             output = self.model(inputs)
-            losses = self.model.loss(inputs, output)
+            losses = self.model.loss(output)
             losses.total_loss.backward()
             self.optimizer.step()
             
@@ -294,16 +295,18 @@ class ModelTrainer(BaseTrainer):
         if self.args.test_prediction:
             start = time.time()
             self.model_val.load_state_dict(self.model.state_dict())
-            self.model_test.load_state_dict(self.model.state_dict())
+            if self._hp.model_test is not None:
+                self.model_test.load_state_dict(self.model.state_dict())
             losses_meter = RecursiveAverageMeter()
             with autograd.no_grad():
                 for batch_idx, sample_batched in enumerate(self.val_loader):
                     inputs = AttrDict(map_dict(lambda x: x.to(self.device), sample_batched))
 
                     output = self.model_val(inputs)
-                    losses = self.model_val.loss(inputs, output)
+                    losses = self.model_val.loss(output)
 
-                    run_through_traj(self.model_test, inputs)
+                    if self._hp.model_test is not None:
+                        run_through_traj(self.model_test, inputs)
 
                     losses_meter.update(losses)
                     del losses
@@ -342,7 +345,7 @@ def run_through_traj(inputs, test_model):
         sigmoids = np.stack(sigmoid, axis=1)
 
 
-    
+
 
 
 

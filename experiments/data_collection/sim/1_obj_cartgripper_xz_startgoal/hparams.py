@@ -25,7 +25,7 @@ agent = {
     'type': GeneralAgent,
     'env': (CartgripperXZ, env_params),
     'T': 30,
-    'gen_xml': (True, 20),  # whether to generate xml, and how often
+    # 'gen_xml': (True, 1),  # whether to generate xml, and how often
     'make_final_gif_freq':100,
     'rejection_sample':True
 }

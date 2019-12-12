@@ -1,14 +1,16 @@
 from visual_mpc.policy.cem_controllers import CEMBaseController
 import imp
 import numpy as np
+from visual_mpc.policy.cem_controllers.visualizer.construct_html import save_gifs, save_html, save_img, fill_template, img_entry_html, save_imgs, save_gifs_direct, save_imgs_direct, save_img_direct, save_img, save_html_direct
 from visual_mpc.video_prediction.pred_util import get_context, rollout_predictions
-from visual_mpc.policy.cem_controllers.visualizer.construct_html import save_gifs, save_html, save_img, fill_template, img_entry_html, save_imgs
 from collections import OrderedDict
 
 from classifier_control.classifier.models.base_tempdistclassifier import BaseTempDistClassifierTestTime
 
 from robonet.video_prediction.testing import VPredEvaluation
 import torch
+from classifier_control.classifier.utils.vis_utils import visualize_barplot_array
+from classifier_control.classifier.utils.vis_utils import fig2img
 
 LOG_SHIFT = 1e-5
 
@@ -80,7 +82,7 @@ class PytorchClassifierController(CEMBaseController):
 
     def _default_hparams(self):
         default_dict = {
-            'finalweight': 100,
+            'finalweight': 10,
             'classifier_params':None,
             'state_append': None,
             'compare_to_expert': False,
@@ -113,60 +115,75 @@ class PytorchClassifierController(CEMBaseController):
         gen_images = prediction_dict['predicted_frames']
 
         scores = []
-        sigmoids = []
 
         for tpred in range(gen_images.shape[1]):
             input_images = ten2pytrch(gen_images[:, tpred], self.device)
             outputs = self.scoring_func({'current_img': input_images,
                                         'goal_img': uint2pytorch(resample_imgs(self._goal_image, self.img_sz), self._hp.num_samples, self.device)})
 
-            sigmoid = []
-            for i in range(self.scoring_func._hp.ndist_max):
-                sigmoid.append(outputs[i].out_simoid.data.cpu().numpy().squeeze())
-            sigmoids = np.stack(sigmoid, axis=1)
-
-            # compute probability of being more than k steps away from goal
-            prob_outside_k = 1-sigmoid
-            scores.append(np.mean(prob_outside_k, 1))
+            sigmoids, softmax_differences = self.post_process_outputs(outputs, scores)
 
         # weight final time step by some number and average over time.
         scores = np.stack(scores, 1)
         scores = self._weight_scores(scores)
-        sigmoids = np.stack(sigmoids, 1)
 
         if self._verbose_condition(cem_itr):
-            verbose_folder = "planning_{}_itr_{}".format(self._t, cem_itr)
+            verbose_folder = self.traj_log_dir + "/planning_{}_itr_{}".format(self._t, cem_itr)
+
             content_dict = OrderedDict()
             visualize_indices = scores.argsort()[:10]
 
             # start images
             for c in range(self._n_cam):
                 name = 'cam_{}_start'.format(c)
-                save_path = save_img(self._verbose_worker, verbose_folder, name, self._images[-1, c])
+                save_path = save_img_direct(verbose_folder, name, self._images[-1, c])
                 content_dict[name] = [save_path for _ in visualize_indices]
+
+            name = 'goal_img'
+            save_path = save_img_direct(verbose_folder, name, (self._goal_image*255).astype(np.uint8))
+            content_dict[name] = [save_path for _ in visualize_indices]
 
             # render predicted images
             for c in range(self._n_cam):
                 verbose_images = [(gen_images[g_i, :, c]*255).astype(np.uint8) for g_i in visualize_indices]
                 row_name = 'cam_{}_pred_images'.format(c)
-                content_dict[row_name] = save_gifs(self._verbose_worker, verbose_folder,
+                content_dict[row_name] = save_gifs_direct(verbose_folder,
                                                        row_name, verbose_images)
 
             # save classifier preds
             sel_sigmoids = sigmoids[visualize_indices]
-
-            sigmoid_images = visualize_sigmoids(sel_sigmoids)
+            sigmoid_images = visualize_barplot_array(sel_sigmoids)
             row_name = 'sigmoid_images'
-            content_dict[row_name] = save_imgs(self._verbose_worker, verbose_folder,
+            content_dict[row_name] = save_imgs_direct(verbose_folder,
+                                               row_name, sigmoid_images)
+
+            sel_softmax_dists = softmax_differences[visualize_indices]
+            sigmoid_images = visualize_barplot_array(sel_softmax_dists)
+            row_name = 'softmax_of_differences'
+            content_dict[row_name] = save_imgs_direct(verbose_folder,
                                                row_name, sigmoid_images)
 
             # save scores
             content_dict['scores'] = scores[visualize_indices]
 
             html_page = fill_template(cem_itr, self._t, content_dict, img_height=self._hp.verbose_img_height)
-            save_html(self._verbose_worker, "{}/plan.html".format(verbose_folder), html_page)
+            save_html_direct("{}/plan.html".format(verbose_folder), html_page)
+
+            #todo make logger instead of verbose worker !!
 
         return scores
+
+    def post_process_outputs(self, outputs, scores):
+        sigmoid = []
+        for i in range(self.scoring_func._hp.ndist_max):
+            sigmoid.append(outputs[i].out_simoid.data.cpu().numpy().squeeze())
+        sigmoids = np.stack(sigmoid, axis=1)
+        sigmoids_shifted = np.concatenate((np.zeros([self._hp.num_samples, 1]), sigmoids[:, :-1]), axis=1)
+        differences = sigmoids - sigmoids_shifted
+        softmax_differences = softmax(differences, axis=1)
+        expected_dist = np.sum((1 + np.arange(softmax_differences.shape[1])[None]) * softmax_differences, 1)
+        scores.append(expected_dist)
+        return sigmoids, softmax_differences
 
     def _weight_scores(self, raw_scores):
         if self._hp.finalweight >= 0:
@@ -197,26 +214,17 @@ def uint2pytorch(img, num_samples, device):
     img = np.transpose(img, [0, 3, 1, 2])
     return torch.from_numpy(img * 2 - 1.0).float().to(device)
 
+
+def softmax(array, axis=0):
+    exp = np.exp(array)
+    exp = exp/(np.sum(exp, axis=axis)[:, None] + 1e-5)
+    return exp
+
 import matplotlib.pyplot as plt
 
-def visualize_sigmoids(sigmoids):
-    imgs = []
-    for b in range(sigmoids.shape[0]):
-        fig = plt.figure()
-        plt.bar(sigmoids[b])
-        imgs.append(fig)
-    return imgs
+
 
 from PIL import Image
 
-def fig2img(fig):
-    """Converts a given figure handle to a 3-channel numpy image array."""
-    fig.canvas.draw()
-    w, h = fig.canvas.get_width_height()
-    buf = np.fromstring(fig.canvas.tostring_argb(), dtype=np.uint8)
-    buf.shape = (w, h, 4)
-    buf = np.roll(buf, 3, axis=2)
-    w, h, d = buf.shape
-    return np.array(Image.frombytes("RGBA", (w, h), buf.tostring()), dtype=np.float32)[:, :, :3] / 255.
 
 
