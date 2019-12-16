@@ -175,6 +175,31 @@ class QFunctionTestTime(QFunction):
         checkpoint = torch.load(self._hp.classifier_restore_path, map_location=self._hp.device)
         self.load_state_dict(checkpoint['state_dict'])
 
+
+    def forward(self, inputs):
+        """
+        forward pass at training time
+        :param
+            images shape = batch x time x channel x height x width
+        :return: model_output
+        """
+        image_pairs = torch.cat([inputs['current_img'], inputs['goal_img']], dim=1)
+
+        qs = []
+        for ns in range(100):
+        # for ns in range(3):
+            actions = torch.FloatTensor(self._hp.batch_size, 2).uniform_(-1, 1).cuda()
+            targetq = self.qnetwork(image_pairs, actions).data.cpu().numpy().squeeze()
+            qs.append(targetq)
+        qs = np.stack(qs)
+
+        v = np.max(qs, 0)
+        cost = -v
+        return cost
+
+    def visualize_test_time(self, content_dict, visualize_indices, verbose_folder):
+        pass
+
     def _default_hparams(self):
         parent_params = super()._default_hparams()
         parent_params.add_hparam('classifier_restore_path', None)

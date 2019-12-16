@@ -4,13 +4,12 @@ import numpy as np
 from visual_mpc.policy.cem_controllers.visualizer.construct_html import save_gifs, save_html, save_img, fill_template, img_entry_html, save_imgs, save_gifs_direct, save_imgs_direct, save_img_direct, save_img, save_html_direct
 from visual_mpc.video_prediction.pred_util import get_context, rollout_predictions
 from collections import OrderedDict
+from classifier_control.classifier.utils.DistFuncEvaluation import DistFuncEvaluation
 
 from classifier_control.classifier.models.base_tempdistclassifier import BaseTempDistClassifierTestTime
 
 from robonet.video_prediction.testing import VPredEvaluation
 import torch
-from classifier_control.classifier.utils.vis_utils import visualize_barplot_array
-from classifier_control.classifier.utils.vis_utils import fig2img
 
 LOG_SHIFT = 1e-5
 
@@ -26,7 +25,7 @@ def resample_imgs(images, img_size):
     elif len(images.shape) == 3:
         return cv2.resize(images, (img_size[1], img_size[0]), interpolation=cv2.INTER_CUBIC)
 
-class PytorchClassifierController(CEMBaseController):
+class LearnedCostController(CEMBaseController):
     """
     Cross Entropy Method Stochastic Optimizer
     """
@@ -42,18 +41,19 @@ class PytorchClassifierController(CEMBaseController):
 
         predictor_hparams = {}
         predictor_hparams['run_batch_size'] = min(self._hp.vpred_batch_size, self._hp.num_samples)
-        self.predictor = VPredEvaluation(self._hp.model_path, predictor_hparams, n_gpus=ngpu, first_gpu=gpu_id)
+        self.predictor = VPredEvaluation(self._hp.vidpred_model_path, predictor_hparams, n_gpus=ngpu, first_gpu=gpu_id)
         self.predictor.restore(gpu_mem_limit=True)
         self._net_context = self.predictor.n_context
         if self._hp.start_planning < self._net_context - 1:
             self._hp.start_planning = self._net_context - 1
-
         self.img_sz = self.predictor._input_hparams['img_size']
 
-        self._hp.classifier_params['batch_size'] = self._hp.num_samples
-        self._hp.classifier_params['data_conf'] = {'img_sz': self.img_sz}  #todo currently uses 64x64!!
-        self.scoring_func = BaseTempDistClassifierTestTime(self._hp.classifier_params)
-        self.device = self.scoring_func.get_device()
+        learned_cost_testparams = {}
+        learned_cost_testparams['batch_size'] = self._hp.num_samples
+        learned_cost_testparams['data_conf'] = {'img_sz': self.img_sz}  #todo currently uses 64x64!!
+        learned_cost_testparams['classifier_restore_path'] = self._hp.learned_cost_model_path
+        self.learned_cost = DistFuncEvaluation(self._hp.learned_cost, learned_cost_testparams)
+        self.device = self.learned_cost.model.get_device()
 
         self._net_context = self.predictor.n_context
         if self._hp.start_planning < self._net_context - 1:
@@ -78,21 +78,21 @@ class PytorchClassifierController(CEMBaseController):
         self._goal_image = None
         self._start_image = None
         self._verbose_worker = None
-        return super(PytorchClassifierController, self).reset()
+        return super(LearnedCostController, self).reset()
 
     def _default_hparams(self):
         default_dict = {
             'finalweight': 10,
-            'classifier_params':None,
             'state_append': None,
             'compare_to_expert': False,
             'verbose_img_height': 128,
             'verbose_frac_display': 0.,
-            'model_params_path':None,
-            'model_path': '',
+            'vidpred_model_path': '',
+            'learned_cost_model_path': '',
             'vpred_batch_size': 200,
+            'learned_cost': BaseTempDistClassifierTestTime
         }
-        parent_params = super(PytorchClassifierController, self)._default_hparams()
+        parent_params = super(LearnedCostController, self)._default_hparams()
 
         for k in default_dict.keys():
             parent_params.add_hparam(k, default_dict[k])
@@ -118,10 +118,9 @@ class PytorchClassifierController(CEMBaseController):
 
         for tpred in range(gen_images.shape[1]):
             input_images = ten2pytrch(gen_images[:, tpred], self.device)
-            outputs = self.scoring_func({'current_img': input_images,
-                                        'goal_img': uint2pytorch(resample_imgs(self._goal_image, self.img_sz), self._hp.num_samples, self.device)})
-
-            sigmoids, softmax_differences = self.post_process_outputs(outputs, scores)
+            inp_dict = {'current_img': input_images,
+                        'goal_img': uint2pytorch(resample_imgs(self._goal_image, self.img_sz), self._hp.num_samples, self.device)}
+            scores.append(self.learned_cost.predict(inp_dict))
 
         # weight final time step by some number and average over time.
         scores = np.stack(scores, 1)
@@ -150,18 +149,7 @@ class PytorchClassifierController(CEMBaseController):
                 content_dict[row_name] = save_gifs_direct(verbose_folder,
                                                        row_name, verbose_images)
 
-            # save classifier preds
-            sel_sigmoids = sigmoids[visualize_indices]
-            sigmoid_images = visualize_barplot_array(sel_sigmoids)
-            row_name = 'sigmoid_images'
-            content_dict[row_name] = save_imgs_direct(verbose_folder,
-                                               row_name, sigmoid_images)
-
-            sel_softmax_dists = softmax_differences[visualize_indices]
-            sigmoid_images = visualize_barplot_array(sel_softmax_dists)
-            row_name = 'softmax_of_differences'
-            content_dict[row_name] = save_imgs_direct(verbose_folder,
-                                               row_name, sigmoid_images)
+            self.learned_cost.model.visualize_test_time(content_dict, visualize_indices, verbose_folder)
 
             # save scores
             content_dict['scores'] = scores[visualize_indices]
@@ -173,17 +161,6 @@ class PytorchClassifierController(CEMBaseController):
 
         return scores
 
-    def post_process_outputs(self, outputs, scores):
-        sigmoid = []
-        for i in range(self.scoring_func._hp.ndist_max):
-            sigmoid.append(outputs[i].out_simoid.data.cpu().numpy().squeeze())
-        sigmoids = np.stack(sigmoid, axis=1)
-        sigmoids_shifted = np.concatenate((np.zeros([self._hp.num_samples, 1]), sigmoids[:, :-1]), axis=1)
-        differences = sigmoids - sigmoids_shifted
-        softmax_differences = softmax(differences, axis=1)
-        expected_dist = np.sum((1 + np.arange(softmax_differences.shape[1])[None]) * softmax_differences, 1)
-        scores.append(expected_dist)
-        return sigmoids, softmax_differences
 
     def _weight_scores(self, raw_scores):
         if self._hp.finalweight >= 0:
@@ -200,7 +177,7 @@ class PytorchClassifierController(CEMBaseController):
         self._verbose_worker = verbose_worker
         self._goal_image = goal_image[-1, 0]  # pick the last time step as the goal image
 
-        return super(PytorchClassifierController, self).act(t, i_tr, state)
+        return super(LearnedCostController, self).act(t, i_tr, state)
 
 
 def ten2pytrch(img, device):
@@ -213,18 +190,5 @@ def uint2pytorch(img, num_samples, device):
     img = np.tile(img[None], [num_samples, 1, 1, 1])
     img = np.transpose(img, [0, 3, 1, 2])
     return torch.from_numpy(img * 2 - 1.0).float().to(device)
-
-
-def softmax(array, axis=0):
-    exp = np.exp(array)
-    exp = exp/(np.sum(exp, axis=axis)[:, None] + 1e-5)
-    return exp
-
-import matplotlib.pyplot as plt
-
-
-
-from PIL import Image
-
 
 

@@ -31,7 +31,7 @@ def save_checkpoint(state, folder, filename='checkpoint.pth'):
 
 
 def get_exp_dir():
-    return os.environ['VMPC_EXP'] + '/classifier_control/distfunc_training'
+    return os.environ['VMPC_EXP'] + '/classifier_control/'
 
 
 def datetime_str():
@@ -42,7 +42,7 @@ def make_path(exp_dir, conf_path, prefix, make_new_dir):
     path = conf_path.split('experiments/', 1)[1]
     if make_new_dir:
         prefix += datetime_str()
-    base_path = os.path.join(exp_dir, path)
+    base_path = os.path.join(exp_dir,  '/'.join(str.split(path, '/')[:-1]))
     return os.path.join(base_path, prefix) if prefix else base_path
 
 
@@ -234,6 +234,7 @@ class ModelTrainer(BaseTrainer):
                 'state_dict': self.model.state_dict(),
                 'optimizer': self.optimizer.state_dict(),
             },  os.path.join(self._hp.exp_path, 'weights'), CheckpointHandler.get_ckpt_name(epoch))
+            self.model.dump_params(self._hp.exp_path)
             self.train_epoch(epoch)
 
     @property

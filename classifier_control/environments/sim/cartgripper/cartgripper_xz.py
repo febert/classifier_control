@@ -24,10 +24,6 @@ class CartgripperXZ(CartgripperXZGrasp):
         else:
             return False
 
-    def get_goal_from_obs(self, obs_dict):
-        self._goal_obj_pose = obs_dict['object_qpos'][-1]
-        self._goal_arm_pose = obs_dict['qpos'][-1]
-
     def get_distance_score(self):
         """
         :return:  mean of the distances between all objects and goals
@@ -37,7 +33,6 @@ class CartgripperXZ(CartgripperXZGrasp):
         curr_pos = self.sim.data.qpos[:self._sdim]
         arm_obj_dist = np.linalg.norm(self._goal_arm_pose - curr_pos)
 
-        import pdb; pdb.set_trace()
         return (mean_obj_dist + arm_obj_dist)/2
 
 

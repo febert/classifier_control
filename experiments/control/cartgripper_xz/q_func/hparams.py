@@ -8,7 +8,8 @@ BASE_DIR = '/'.join(str.split(__file__, '/')[:-1])
 current_dir = os.path.dirname(os.path.realpath(__file__))
 
 from visual_mpc.policy.random.sampler_policy import SamplerPolicy
-from classifier_control.cem_controllers.pytorch_classifier_controller import PytorchClassifierController
+from classifier_control.cem_controllers.pytorch_classifier_controller import LearnedCostController
+from classifier_control.classifier.models.q_function import QFunctionTestTime
 
 
 env_params = {
@@ -26,26 +27,24 @@ agent = {
     'env': (CartgripperXZ, env_params),
     'T': 13,
     'gen_xml': (True, 20),  # whether to generate xml, and how often
-    'make_final_gif_freq':10,
+    # 'make_final_gif_freq':1,
     'start_goal_confs': os.environ['VMPC_DATA'] + '/classifier_control/data_collection/sim/1_obj_cartgripper_xz_startgoal/raw',
     'num_load_steps':30,
 }
 
-classifer_params = {
-    'classifier_restore_path': os.environ['VMPC_EXP'] + '/classifier_control/distfunc_training/ensem_classifier/cartgripper_xz/weights/weights_ep199.pth',
-}
 
 policy = {
-    'type': PytorchClassifierController,
+    'type': LearnedCostController,
     'replan_interval': 13,
     'nactions': 13,
     # 'num_samples': 200,
     'selection_frac': 0.05,
     'sampler': CorrelatedNoiseSampler,
     'initial_std': [0.05, 0.05],
-    'classifier_params': classifer_params,
+    'learned_cost':QFunctionTestTime,
+    'learned_cost_model_path': os.environ['VMPC_EXP'] + '/classifier_control/distfunc_training/q_function_training/cartgripper_xz/gamma0.2/weights/weights_ep199.pth',
     'verbose_every_iter': True,
-    "model_path": os.environ['VMPC_EXP'] + '/classifier_control/vidpred_training/cartgripper_xz/docker_training/HDF5TrainableInterface_0_edf90eee_2019-11-22_04-38-28qp2v6u6q/checkpoint_65000',
+    "vidpred_model_path": os.environ['VMPC_EXP'] + '/classifier_control/vidpred_training/cartgripper_xz/docker_training/HDF5TrainableInterface_0_edf90eee_2019-11-22_04-38-28qp2v6u6q/checkpoint_65000',
 }
 
 config = {

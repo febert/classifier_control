@@ -8,7 +8,7 @@ BASE_DIR = '/'.join(str.split(__file__, '/')[:-1])
 current_dir = os.path.dirname(os.path.realpath(__file__))
 
 from visual_mpc.policy.random.sampler_policy import SamplerPolicy
-from classifier_control.cem_controllers.pytorch_classifier_controller import PytorchClassifierController
+from classifier_control.cem_controllers.pytorch_classifier_controller import LearnedCostController
 
 
 env_params = {
@@ -38,7 +38,7 @@ classifer_params = {
 }
 
 policy = {
-    'type': PytorchClassifierController,
+    'type': LearnedCostController,
     'replan_interval': 13,
     'nactions': 13,
     # 'num_samples': 200,

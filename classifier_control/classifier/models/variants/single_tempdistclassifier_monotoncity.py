@@ -1,17 +1,9 @@
-import numpy as np
-import copy
 import torch
 from classifier_control.classifier.utils.general_utils import AttrDict
-import torch.nn as nn
-import pdb
-from classifier_control.classifier.utils.subnetworks import ConvEncoder
-from classifier_control.classifier.utils.spatial_softmax import SpatialSoftmax
-
-from classifier_control.classifier.models.base_model import BaseModel
-from classifier_control.classifier.utils.layers import Linear
+from classifier_control.classifier.models.single_tempdistclassifier import SingleTempDistClassifier
 
 
-class SingleTempDistClassifierMonotone(BaseModel):
+class SingleTempDistClassifierMonotone(SingleTempDistClassifier):
 
     def forward(self, inputs):
         """
@@ -32,18 +24,10 @@ class SingleTempDistClassifierMonotone(BaseModel):
         model_output = AttrDict(fraction=fraction, pos_pair=self.pos_pair, neg_pair=self.neg_pair)
         return model_output
 
-
     def loss(self, model_output):
         logits_ = model_output.logits[:, 0]
         return self.cross_ent_loss(logits_, self.labels.to(self._hp.device))
 
-
-def select_indices(tensor, indices):
-    new_images = []
-    for b in range(tensor.shape[0]):
-        new_images.append(tensor[b, indices[b]])
-    tensor = torch.stack(new_images, dim=0)
-    return tensor
 
 class TesttimeSingleTempDistClassifier(SingleTempDistClassifierMonotone):
     def __init__(self, params, tdist, logger):

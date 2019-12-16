@@ -9,6 +9,7 @@ current_dir = os.path.dirname(os.path.realpath(__file__))
 
 from visual_mpc.policy.random.sampler_policy import SamplerPolicy
 from classifier_control.cem_controllers.pytorch_classifier_controller import LearnedCostController
+from classifier_control.classifier.models.multiway_tempdist_classifier import TesttimeMultiwayTempdistClassifier
 
 
 env_params = {
@@ -40,8 +41,8 @@ policy = {
     'selection_frac': 0.05,
     'sampler': CorrelatedNoiseSampler,
     'initial_std': [0.05, 0.05],
-    # 'learned_cost': type of learned cost
-    'learned_cost_model_path': os.environ['VMPC_EXP'] + '/classifier_control/distfunc_training/ensem_classifier/cartgripper_xz/weights/weights_ep199.pth',
+    'learned_cost':TesttimeMultiwayTempdistClassifier,
+    'learned_cost_model_path': os.environ['VMPC_EXP'] + '/classifier_control/distfunc_training/tdist_multiway_classification/cartgripper_xz/weights/weights_ep199.pth',
     'verbose_every_iter': True,
     "vidpred_model_path": os.environ['VMPC_EXP'] + '/classifier_control/vidpred_training/cartgripper_xz/docker_training/HDF5TrainableInterface_0_edf90eee_2019-11-22_04-38-28qp2v6u6q/checkpoint_65000',
 }

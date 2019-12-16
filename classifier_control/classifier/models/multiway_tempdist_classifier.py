@@ -1,16 +1,16 @@
 from classifier_control.classifier.utils.spatial_softmax import SpatialSoftmax
 from classifier_control.classifier.utils.layers import Linear
 from classifier_control.classifier.utils.subnetworks import ConvEncoder
+from visual_mpc.policy.cem_controllers.visualizer.construct_html import save_imgs_direct
 import numpy as np
-import cv2
-import pdb
 import torch
 from classifier_control.classifier.utils.general_utils import AttrDict
 import torch.nn as nn
 from classifier_control.classifier.models.base_model import BaseModel
 from classifier_control.classifier.models.single_tempdistclassifier import SingleTempDistClassifier
-
 from classifier_control.classifier.models.utils.utils import select_indices
+from classifier_control.classifier.utils.vis_utils import visualize_barplot_array
+
 
 class MultiwayTempdistClassifer(BaseModel):
     def __init__(self, overrideparams, logger=None):
@@ -66,10 +66,8 @@ class MultiwayTempdistClassifer(BaseModel):
 
         self.labels = torch.clamp_max(t1 - t0, self._hp.tmax_label-1)
 
-        self.img_pair = torch.stack([im_t0, im_t1], dim=1)
-        img_pair_cat = torch.cat([im_t0, im_t1], dim=1)
-
-        return img_pair_cat
+        img_pair_stack = torch.stack([im_t0, im_t1], dim=1)
+        return img_pair_stack
 
     def forward(self, inputs):
         """
@@ -82,12 +80,13 @@ class MultiwayTempdistClassifer(BaseModel):
         model_output = self.make_prediction(image_pairs)
         return model_output
 
-    def make_prediction(self, image_pairs):
-        embeddings = self.encoder(image_pairs)
+    def make_prediction(self, image_pairs_stacked):
+        im_t0, im_t1 = image_pairs_stacked[:,0], image_pairs_stacked[:,1]
+        embeddings = self.encoder(torch.cat([im_t0, im_t1], dim=1))
         embeddings = self.spatial_softmax(embeddings)
         logits = self.linear(embeddings)
         self.out_softmax = torch.softmax(logits, dim=1)
-        model_output = AttrDict(logits=logits, out_softmax=self.out_softmax, img_pair=self.img_pair)
+        model_output = AttrDict(logits=logits, out_softmax=self.out_softmax, img_pair=image_pairs_stacked)
         return model_output
 
     def _log_outputs(self, model_output, inputs, losses, step, log_images, phase):
@@ -130,9 +129,18 @@ class TesttimeMultiwayTempdistClassifier(MultiwayTempdistClassifer):
             images shape = batch x time x channel x height x width
         :return: model_output
         """
-        image_pairs = torch.cat([inputs['current_img'], inputs['goal_img']], dim=1)
-        model_output = self.make_prediction(image_pairs)
-        return model_output
+        image_pairs = torch.stack([inputs['current_img'], inputs['goal_img']], dim=1)
+        self.out_softmax = self.make_prediction(image_pairs).out_softmax.data.cpu().numpy().squeeze()
+        expected_dist = np.sum((1 + np.arange(self.out_softmax.shape[1])[None]) * self.out_softmax, 1)
+        return expected_dist
+
+    def visualize_test_time(self, content_dict, visualize_indices, verbose_folder):
+        # save classifier preds
+        sel_softmax= self.out_softmax[visualize_indices]
+        sigmoid_images = visualize_barplot_array(sel_softmax)
+        row_name = 'softmax'
+        content_dict[row_name] = save_imgs_direct(verbose_folder,
+                                                  row_name, sigmoid_images)
 
 def ptrch2uint8(img):
     return ((img + 1)/2*255.).astype(np.uint8)

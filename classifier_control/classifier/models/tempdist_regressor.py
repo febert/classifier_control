@@ -69,10 +69,8 @@ class TempdistRegressor(BaseModel):
 
         self.labels = torch.clamp_max(t1 - t0, self._hp.tmax_label).type(torch.FloatTensor)
 
-        self.img_pair = torch.stack([im_t0, im_t1], dim=1)
-        img_pair_cat = torch.cat([im_t0, im_t1], dim=1)
-
-        return img_pair_cat
+        img_pair_stack = torch.stack([im_t0, im_t1], dim=1)
+        return img_pair_stack
 
     def forward(self, inputs):
         """
@@ -85,11 +83,12 @@ class TempdistRegressor(BaseModel):
         model_output = self.make_prediction(image_pairs)
         return model_output
 
-    def make_prediction(self, image_pairs):
-        embeddings = self.encoder(image_pairs)
+    def make_prediction(self, image_pairs_stacked):
+        im_t0, im_t1 = image_pairs_stacked[:,0], image_pairs_stacked[:,1]
+        embeddings = self.encoder(torch.cat([im_t0, im_t1], dim=1))
         embeddings = self.spatial_softmax(embeddings)
         self.tdist_estimates = self.linear(embeddings)
-        model_output = AttrDict(tdist_estimates=self.tdist_estimates, img_pair=self.img_pair)
+        model_output = AttrDict(tdist_estimates=self.tdist_estimates, img_pair=image_pairs_stacked)
         return model_output
 
     def _log_outputs(self, model_output, inputs, losses, step, log_images, phase):
@@ -132,9 +131,12 @@ class TempdistRegressorTestTime(TempdistRegressor):
             images shape = batch x time x channel x height x width
         :return: model_output
         """
-        image_pairs = torch.cat([inputs['current_img'], inputs['goal_img']], dim=1)
-        model_output = self.make_prediction(image_pairs)
-        return model_output
+        image_pairs = torch.stack([inputs['current_img'], inputs['goal_img']], dim=1)
+        expected_distance = self.make_prediction(image_pairs).tdist_estimates.data.cpu().numpy().squeeze()
+        return expected_distance
+
+    def visualize_test_time(self, content_dict, visualize_indices, verbose_folder):
+        pass
 
     # def vis_dist_over_traj(self, inputs, step):
     #     images = inputs.demo_seq_images

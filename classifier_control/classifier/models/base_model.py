@@ -1,5 +1,6 @@
 import os
 from contextlib import contextmanager
+import yaml
 
 import pdb
 import torch
@@ -19,7 +20,8 @@ class BaseModel(nn.Module):
     def override_defaults(self, params):
         for name, value in params.items():
             print('overriding param {} to value {}'.format(name, value))
-            if value == getattr(self._hp, name):
+            if name == 'ignore_same_as_default': continue
+            if value == getattr(self._hp, name) and 'ignore_same_as_default' not in params:
                 raise ValueError("attribute is {} is identical to default value!!".format(name))
             self._hp.set_hparam(name, value)
 
@@ -32,7 +34,8 @@ class BaseModel(nn.Module):
             'state_dim': -1,
             'input_nc': 3,  # number of input feature maps
             'device':None,
-            'data_conf':None
+            'data_conf':None,
+            'img_sz': None
         })
         
         # Network params
@@ -52,7 +55,7 @@ class BaseModel(nn.Module):
     def postprocess_params(self):
         self._hp.add_hparam('builder', LayerBuilderParams(
             self._hp.use_convs, self._hp.use_batchnorm, self._hp.normalization))
-        self._hp.add_hparam('img_sz', self._hp.data_conf['img_sz'])
+        self._hp.img_sz = self._hp.data_conf['img_sz']
 
     def build_network(self):
         raise NotImplementedError("Need to implement this function in the subclass!")
@@ -115,4 +118,10 @@ class BaseModel(nn.Module):
 
         self._logger.log_scalar(grad_norms.mean(), 'gradients/mean_norm', step, phase)
         self._logger.log_scalar(grad_norms.max(), 'gradients/max_norm', step, phase)
-    
+
+    def dump_params(self, path):
+        with open(os.path.join(path, 'params.yaml'), 'w') as f:
+            config = self._hp.values()
+            config['data_conf'] = dict(config['data_conf'])
+            yaml.dump(config, f)
+
