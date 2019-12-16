@@ -30,7 +30,7 @@ agent = {
 policy = {
     'type' : SamplerPolicy,
     'nactions': 100,
-    'initial_std':  [0.2, 0.2],
+    'initial_std':  [0.3, 0.3],
 }
 
 config = {
