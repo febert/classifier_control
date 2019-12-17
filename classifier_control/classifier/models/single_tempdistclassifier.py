@@ -39,6 +39,7 @@ class SingleTempDistClassifier(BaseModel):
         image_pairs = torch.cat([pos_pairs, neg_pairs], dim=0)
         embeddings = self.encoder(image_pairs)
         embeddings = self.spatial_softmax(embeddings)
+
         logits = self.linear(embeddings)
         self.out_sigmoid = torch.sigmoid(logits)
         model_output = AttrDict(logits=logits, out_simoid=self.out_sigmoid, pos_pair=self.pos_pair, neg_pair=self.neg_pair)

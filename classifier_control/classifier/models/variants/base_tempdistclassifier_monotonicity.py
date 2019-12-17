@@ -22,11 +22,29 @@ class MonotonicityBaseTempDistClassifier(BaseTempDistClassifier):
         :return: model_output
         """
         model_output = []
-        accuml_fractions = torch.ones(self._hp.batch_size, device=self._hp.device)
+        accuml_fractions = torch.ones(self._hp.batch_size*2, device=self._hp.device)
         for c in self.tdist_classifiers:
             outdict = c(inputs)
-            accuml_fractions = accuml_fractions*outdict.fraction
+            accuml_fractions = accuml_fractions*outdict.fraction.squeeze()
             c.out_sigmoid = accuml_fractions
             outdict.logits = torch.log(accuml_fractions)
+
             model_output.append(outdict)
         return model_output
+
+
+class MonotonicityBaseTempDistClassifierTestTime(MonotonicityBaseTempDistClassifier):
+    def __init__(self, overrideparams, logger=None):
+        super(MonotonicityBaseTempDistClassifier, self).__init__(overrideparams, logger)
+        if self._hp.classifier_restore_path is not None:
+            checkpoint = torch.load(self._hp.classifier_restore_path, map_location=self._hp.device)
+            self.load_state_dict(checkpoint['state_dict'])
+        else:
+            print('#########################')
+            print("Warning Classifier weights not restored during init!!")
+            print('#########################')
+
+    def _default_hparams(self):
+        parent_params = super()._default_hparams()
+        parent_params.add_hparam('classifier_restore_path', None)
+        return parent_params

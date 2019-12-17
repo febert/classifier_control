@@ -25,8 +25,7 @@ class SingleTempDistClassifierMonotone(SingleTempDistClassifier):
         return model_output
 
     def loss(self, model_output):
-        logits_ = model_output.logits[:, 0]
-        return self.cross_ent_loss(logits_, self.labels.to(self._hp.device))
+        return self.cross_ent_loss(model_output.logits, self.labels.to(self._hp.device))
 
 
 class TesttimeSingleTempDistClassifier(SingleTempDistClassifierMonotone):
