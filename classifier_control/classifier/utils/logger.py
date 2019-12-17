@@ -60,6 +60,9 @@ class Logger:
         video_frames = video_frames.unsqueeze(1)  # add an extra dimension after batch to get grid of size 1
         self._loop_batch(self._summ_writer.add_video, '{}_{}'.format(name, phase), video_frames, step, fps=fps)
 
+    def log_image(self, images, name, step, phase):
+        self._summ_writer.add_image('{}_{}'.format(name, phase), images, step)
+
     def log_image_grid(self, images, name, step, phase, nrow=8):
         assert len(images.shape) == 4, "Image grid logging requires input shape [batch, C, H, W]!"
         img_grid = torchvision.utils.make_grid(images, nrow=nrow)
@@ -88,10 +91,19 @@ class Logger:
         self._summ_writer.export_scalars_to_json(log_path)
 
 
+
 def unstack(array, dim):
     arr = np.split(array, array.shape[dim], dim)
     arr = [a.squeeze() for a in arr]
     return arr
+
+
+def get_text_row(pred_scores, _n_logged_samples):
+    text_images = []
+    for b in range(_n_logged_samples):
+        text_images.append(draw_text_image('{}'.format(pred_scores[b])).transpose(2, 0, 1))
+    return np.concatenate(text_images, 2)
+
 
 
 class TdistClassifierLogger(Logger):
@@ -104,31 +116,26 @@ class TdistClassifierLogger(Logger):
         pos_pred = out_sigmoid[:out_sigmoid.shape[0]//2].data.cpu().numpy()
         neg_pred = out_sigmoid[out_sigmoid.shape[0]//2:].data.cpu().numpy()
 
-        def image_row(image_pairs, scores):
+
+        def image_row(image_pairs, scores, _n_logged_samples):
 
             first_row = image_pairs[:, 0]
-            first_row = first_row[:self._n_logged_samples]
+            first_row = first_row[:_n_logged_samples]
             first_row = np.concatenate(unstack(first_row, 0), 2)
 
             second_row = image_pairs[:, 1]
-            second_row = second_row[:self._n_logged_samples]
+            second_row = second_row[:_n_logged_samples]
             second_row = np.concatenate(unstack(second_row, 0), 2)
 
-            numbers = get_sigmoid_annotations(scores)
+            numbers = get_text_row(scores, _n_logged_samples)
 
             return (np.concatenate([first_row, second_row, numbers], 1) + 1.)/2.0
 
-        def get_sigmoid_annotations(pred_scores):
-            text_images = []
-            for b in range(self._n_logged_samples):
-                text_images.append(draw_text_image('{}'.format(pred_scores[b])).transpose(2, 0, 1))
-            return np.concatenate(text_images, 2)
-
-        positives_image = image_row(pos_pair, pos_pred)
+        positives_image = image_row(pos_pair, pos_pred, self._n_logged_samples)
         # import pdb; pdb.set_trace()
         self._summ_writer.add_image('{}_{}'.format(name + '_positives', phase), positives_image, step)
 
-        positives_image = image_row(neg_pair, neg_pred)
+        positives_image = image_row(neg_pair, neg_pred, self._n_logged_samples)
         self._summ_writer.add_image('{}_{}'.format(name + '_negatives', phase), positives_image, step)
         
     def log_heatmap_image(self, pos_pair, heatmap, out_sigmoid,
@@ -187,3 +194,55 @@ class TdistClassifierLogger(Logger):
 
 
 
+
+from classifier_control.classifier.utils.vis_utils import visualize_barplot_array
+
+class TdistMultiwayClassifierLogger(Logger):
+    def log_pair_predictions(self, img_pair, softmax_prediction, label,
+                             name, step, phase):
+
+        image_pairs = img_pair.data.cpu().numpy().squeeze()
+        softmax_prediction = softmax_prediction.data.cpu().numpy().squeeze()
+
+        first_row = image_pairs[:, 0]
+        first_row = first_row[:self._n_logged_samples]
+        first_row = np.concatenate(unstack(first_row, 0), 2)
+
+        second_row = image_pairs[:, 1]
+        second_row = second_row[:self._n_logged_samples]
+        second_row = np.concatenate(unstack(second_row, 0), 2)
+
+
+        pred_score_images = visualize_barplot_array(softmax_prediction[:self._n_logged_samples])
+        pred_score_images = [np.transpose((img.astype(np.float32))/255., [2,0,1]) for img in pred_score_images]
+        pred_row = np.concatenate(pred_score_images, axis=2)
+
+
+        label_row = get_text_row(label, self._n_logged_samples)
+
+        full_image = (np.concatenate([first_row, second_row, pred_row, label_row], 1) + 1.)/2.0
+
+        self._summ_writer.add_image('{}_{}'.format(name, phase), full_image, step)
+
+
+class TdistRegressorLogger(Logger):
+    def log_pair_predictions(self, img_pair, prediction, label,
+                                          name, step, phase):
+
+        image_pairs = img_pair.data.cpu().numpy().squeeze()
+
+        first_row = image_pairs[:, 0]
+        first_row = first_row[:self._n_logged_samples]
+        first_row = np.concatenate(unstack(first_row, 0), 2)
+
+        second_row = image_pairs[:, 1]
+        second_row = second_row[:self._n_logged_samples]
+        second_row = np.concatenate(unstack(second_row, 0), 2)
+
+        pred_row = get_text_row(prediction.data.cpu().numpy().squeeze(), self._n_logged_samples)
+        label_row = get_text_row(label, self._n_logged_samples)
+
+        full_image = (np.concatenate([first_row, second_row, pred_row, label_row], 1) + 1.)/2.0
+
+        # import pdb; pdb.set_trace()
+        self._summ_writer.add_image('{}_{}'.format(name, phase), full_image, step)

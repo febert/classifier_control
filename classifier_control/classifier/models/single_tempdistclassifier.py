@@ -12,30 +12,11 @@ from classifier_control.classifier.utils.layers import Linear
 
 
 class SingleTempDistClassifier(BaseModel):
-    def __init__(self, params, tdist, logger):
+    def __init__(self, hp, tdist, logger):
         super().__init__(logger)
-        self._hp = self._default_hparams()
-        self.override_defaults(params)  # override defaults with config file
-        self.postprocess_params()
-        assert self._hp.batch_size != -1  # make sure that batch size was overridden
-
+        self._hp = hp
         self.tdist = tdist
         self.build_network()
-        self._use_pred_length = False
-
-    def _default_hparams(self):
-        default_dict = AttrDict({
-            'use_skips':False, #todo try resnet architecture!
-            'ngf': 8,
-            'nz_enc': 64,
-            'classifier_restore_path':None  # not really needed here.
-        })
-
-        # add new params to parent params
-        parent_params = super()._default_hparams()
-        for k in default_dict.keys():
-            parent_params.add_hparam(k, default_dict[k])
-        return parent_params
 
     def build_network(self, build_encoder=True):
         self.encoder = ConvEncoder(self._hp)
@@ -58,6 +39,7 @@ class SingleTempDistClassifier(BaseModel):
         image_pairs = torch.cat([pos_pairs, neg_pairs], dim=0)
         embeddings = self.encoder(image_pairs)
         embeddings = self.spatial_softmax(embeddings)
+
         logits = self.linear(embeddings)
         self.out_sigmoid = torch.sigmoid(logits)
         model_output = AttrDict(logits=logits, out_simoid=self.out_sigmoid, pos_pair=self.pos_pair, neg_pair=self.neg_pair)
@@ -101,7 +83,7 @@ class SingleTempDistClassifier(BaseModel):
 
         return pos_pair_cat, neg_pair_cat
 
-    def loss(self, model_inputs, model_output):
+    def loss(self, model_output):
         logits_ = model_output.logits[:, 0]
         return self.cross_ent_loss(logits_, self.labels.to(self._hp.device))
 

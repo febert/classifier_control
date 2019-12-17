@@ -31,7 +31,7 @@ def save_checkpoint(state, folder, filename='checkpoint.pth'):
 
 
 def get_exp_dir():
-    return os.environ['VMPC_EXP'] + '/classifier_control/classifier_training'
+    return os.environ['VMPC_EXP'] + '/classifier_control/'
 
 
 def datetime_str():
@@ -42,7 +42,7 @@ def make_path(exp_dir, conf_path, prefix, make_new_dir):
     path = conf_path.split('experiments/', 1)[1]
     if make_new_dir:
         prefix += datetime_str()
-    base_path = os.path.join(exp_dir, path)
+    base_path = os.path.join(exp_dir,  '/'.join(str.split(path, '/')[:-1]))
     return os.path.join(base_path, prefix) if prefix else base_path
 
 
@@ -95,15 +95,16 @@ class ModelTrainer(BaseTrainer):
             model = ModelClass(model_conf, logger)
             model.to(self.device)
             model.device = self.device
-            loader = FixLenVideoDataset(self._hp.data_dir, model._hp, data_conf, phase, shuffle=True).get_data_loader(self._hp.batch_size)
-            return logger, model, loader
+            if phase is not 'test':
+                loader = FixLenVideoDataset(self._hp.data_dir, model._hp, data_conf, phase, shuffle=True).get_data_loader(self._hp.batch_size)
+                return model, loader
+            else:
+                return model
 
-        self.logger, self.model, self.train_loader = build_phase(self._hp.logger, self._hp.model, 'train')
-        self.logger_test, self.model_test, self.val_loader = \
-            build_phase(self._hp.logger, self._hp.model, 'val')
-
-        print('len train dataset', len(self.train_loader))
-        print('len val dataset', len(self.val_loader))
+        self.model, self.train_loader = build_phase(self._hp.logger, self._hp.model, 'train')
+        self.model_val, self.val_loader = build_phase(self._hp.logger, self._hp.model, 'val')
+        if self._hp.model_test is not None:
+            self.model_test = build_phase(self._hp.logger, self._hp.model_test, 'test')
 
         self.optimizer = Adam(self.model.parameters(), lr=self._hp.lr)
         # self.optimizer = self.get_optimizer_class()(self.model.parameters(), lr=self._hp.lr)
@@ -233,6 +234,7 @@ class ModelTrainer(BaseTrainer):
                 'state_dict': self.model.state_dict(),
                 'optimizer': self.optimizer.state_dict(),
             },  os.path.join(self._hp.exp_path, 'weights'), CheckpointHandler.get_ckpt_name(epoch))
+            self.model.dump_params(self._hp.exp_path)
             self.train_epoch(epoch)
 
     @property
@@ -252,7 +254,7 @@ class ModelTrainer(BaseTrainer):
         data_load_time = AverageMeter()
         self.log_outputs_interval = 10
         self.log_images_interval = int(epoch_len / self.args.imepoch)
-        
+
         print('starting epoch ', epoch)
 
         for self.batch_idx, sample_batched in enumerate(self.train_loader):
@@ -261,7 +263,7 @@ class ModelTrainer(BaseTrainer):
 
             self.optimizer.zero_grad()
             output = self.model(inputs)
-            losses = self.model.loss(inputs, output)
+            losses = self.model.loss(output)
             losses.total_loss.backward()
             self.optimizer.step()
             
@@ -293,15 +295,19 @@ class ModelTrainer(BaseTrainer):
         print('Running Testing')
         if self.args.test_prediction:
             start = time.time()
-            self.model_test.load_state_dict(self.model.state_dict())
+            self.model_val.load_state_dict(self.model.state_dict())
+            if self._hp.model_test is not None:
+                self.model_test.load_state_dict(self.model.state_dict())
             losses_meter = RecursiveAverageMeter()
-            # self.model_test.eval()
             with autograd.no_grad():
                 for batch_idx, sample_batched in enumerate(self.val_loader):
                     inputs = AttrDict(map_dict(lambda x: x.to(self.device), sample_batched))
 
-                    output = self.model_test(inputs)
-                    losses = self.model_test.loss(inputs, output)
+                    output = self.model_val(inputs)
+                    losses = self.model_val.loss(output)
+
+                    if self._hp.model_test is not None:
+                        run_through_traj(self.model_test, inputs)
 
                     losses_meter.update(losses)
                     del losses
@@ -310,7 +316,7 @@ class ModelTrainer(BaseTrainer):
                     print("Finished Evaluation! Exiting...")
                     exit(0)
 
-                self.model_test.log_outputs(
+                self.model_val.log_outputs(
                     output, inputs, losses_meter.avg, self.global_step, log_images=True, phase='val')
                 print(('\nTest set: Average loss: {:.4f} in {:.2f}s\n'
                        .format(losses_meter.avg.total_loss.item(), time.time() - start)))
@@ -326,6 +332,23 @@ class ModelTrainer(BaseTrainer):
 
 def save_config(conf_path, exp_conf_path):
     copy(conf_path, exp_conf_path)
+
+
+def run_through_traj(inputs, test_model):
+    images = inputs.demo_seq_images
+
+    for t in range(images.shape[0]):
+        outputs = test_model({'current_img':images, 'goal_img':images[:, -1]})
+
+        sigmoid = []
+        for i in range(len(outputs)):
+            sigmoid.append(outputs[i].out_simoid.data.cpu().numpy().squeeze())
+        sigmoids = np.stack(sigmoid, axis=1)
+
+
+
+
+
 
         
 if __name__ == '__main__':
