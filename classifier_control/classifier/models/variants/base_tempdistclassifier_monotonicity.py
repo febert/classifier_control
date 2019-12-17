@@ -32,8 +32,10 @@ class MonotonicityBaseTempDistClassifier(BaseTempDistClassifier):
             model_output.append(outdict)
         return model_output
 
+from classifier_control.classifier.models.base_tempdistclassifier import BaseTempDistClassifierTestTime
+from classifier_control.classifier.models.variants.single_tempdistclassifier_monotoncity import TesttimeSingleTempDistClassifier
 
-class MonotonicityBaseTempDistClassifierTestTime(MonotonicityBaseTempDistClassifier):
+class MonotonicityBaseTempDistClassifierTestTime(MonotonicityBaseTempDistClassifier, BaseTempDistClassifierTestTime):
     def __init__(self, overrideparams, logger=None):
         super(MonotonicityBaseTempDistClassifier, self).__init__(overrideparams, logger)
         if self._hp.classifier_restore_path is not None:
@@ -48,3 +50,6 @@ class MonotonicityBaseTempDistClassifierTestTime(MonotonicityBaseTempDistClassif
         parent_params = super()._default_hparams()
         parent_params.add_hparam('classifier_restore_path', None)
         return parent_params
+
+    def singletempdistclassifier(self):
+        return TesttimeSingleTempDistClassifier

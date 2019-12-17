@@ -18,9 +18,7 @@ class SingleTempDistClassifierMonotone(SingleTempDistClassifier):
         image_pairs = torch.cat([pos_pairs, neg_pairs], dim=0)
         embeddings = self.encoder(image_pairs)
         embeddings = self.spatial_softmax(embeddings)
-
         fraction = torch.sigmoid(self.linear(embeddings))
-
         model_output = AttrDict(fraction=fraction, pos_pair=self.pos_pair, neg_pair=self.neg_pair)
         return model_output
 
@@ -43,9 +41,8 @@ class TesttimeSingleTempDistClassifier(SingleTempDistClassifierMonotone):
         image_pairs = torch.cat([inputs['current_img'], inputs['goal_img']], dim=1)
         embeddings = self.encoder(image_pairs)
         embeddings = self.spatial_softmax(embeddings)
-        logits = self.linear(embeddings)
-        self.out_sigmoid = torch.sigmoid(logits)
-        model_output = AttrDict(logits=logits, out_simoid=self.out_sigmoid)
+        fraction = torch.sigmoid(self.linear(embeddings))
+        model_output = AttrDict(fraction=fraction, pos_pair=self.pos_pair, neg_pair=self.neg_pair)
         return model_output
 
 
