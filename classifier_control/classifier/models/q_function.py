@@ -89,9 +89,9 @@ class QFunction(BaseModel):
 
         self.pos_pair = torch.stack([im_t0, im_tg], dim=1)
         if self._hp.low_dim:
-            pos_pair_cat = torch.cat([s_t0, s_t1, s_tg], dim=1)
+            self.pos_pair_cat = torch.cat([s_t0, s_t1, s_tg], dim=1)
         else:
-            pos_pair_cat = torch.cat([im_t0, im_t1, im_tg], dim=1)
+            self.pos_pair_cat = torch.cat([im_t0, im_t1, im_tg], dim=1)
 
         # get negatives:
         t0 = np.random.randint(0, tlen - tdist - 1, self._hp.batch_size)
@@ -109,14 +109,14 @@ class QFunction(BaseModel):
         neg_act = select_indices(actions, t0)
         self.neg_pair = torch.stack([im_t0, im_tg], dim=1)
         if self._hp.low_dim:
-            neg_pair_cat = torch.cat([s_t0, s_t1, s_tg], dim=1)
+            self.neg_pair_cat = torch.cat([s_t0, s_t1, s_tg], dim=1)
         else:
-            neg_pair_cat = torch.cat([im_t0, im_t1, im_tg], dim=1)
+            self.neg_pair_cat = torch.cat([im_t0, im_t1, im_tg], dim=1)
 
         # one means within range of tdist range,  zero means outside of tdist range
         self.labels = torch.cat([torch.ones(self._hp.batch_size), torch.zeros(self._hp.batch_size)])
 
-        return pos_pair_cat, neg_pair_cat, pos_act, neg_act
+        return self.pos_pair_cat, self.neg_pair_cat, pos_act, neg_act
 
 
     def loss(self, inputs, model_output):
@@ -152,9 +152,64 @@ class QFunction(BaseModel):
         return losses
     
     def _log_outputs(self, model_output, inputs, losses, step, log_images, phase):
+        print(self.pos_pair_cat.shape, self.neg_pair_cat.shape)
+        print(model_output.shape, self.pos_pair.shape, self.neg_pair.shape)
+        if np.random.uniform() < 0.9:
+          return
+        
+        qvals = []
+        with torch.no_grad():
+            print("################################################")
+            for x in np.arange(-0.3, 0.3, 0.02):
+                for y in np.arange(-0.3, 0.3, 0.02):
+                    state = torch.FloatTensor([x,y]).cuda().unsqueeze(0).repeat(self.pos_pair_cat.size(0), 1)
+                    state = torch.cat([state, self.pos_pair_cat[:,4:]], 1)
+                    qs = []
+                    for ns in range(100):
+                        actions = torch.FloatTensor(self.pos_pair_cat.size(0), 2).uniform_(-1, 1).cuda()
+                        targetq = self.target_qnetwork(state, actions)
+                        qs.append(targetq)
+#                     qs, _ = torch.stack(qs).max(0)
+                    qs = torch.stack(qs).mean(0)
+                    print(state[0], qs[0])
+                    qvals.append(qs)
+                    
+            qvals = torch.stack(qvals)
+        print("################################################")
+        print(qvals.shape)
+        qvals = qvals.view(30, 30, 32)
+#         print(self.pos_pair_cat[0,4:])
+#         print(qvals[:,:,0])
+#         assert(False)
+#         qvals -= qvals.min()
+#         qvals /= qvals.max()
+        
+#         import matplotlib.pyplot as plt
+#         import seaborn as sns
+#         import io
+# #         import tensorflow as tf
+#         for i in range(self.pos_pair_cat.size(0)):
+#             sns.heatmap(qvals[:, :, i].cpu().numpy())
+#             plt.draw()
+
+#             # Now we can save it to a numpy array.
+#             data = np.fromstring(fig.canvas.tostring_rgb(), dtype=np.uint8, sep='')
+#             data = data.reshape(fig.canvas.get_width_height()[::-1] + (3,))
+# #             buf = io.BytesIO()
+# #             plt.savefig(buf, format='png')
+# #             buf.seek(0)
+# #             image = tf.image.decode_png(buf.getvalue(), channels=3)
+#             print(data.shape)
+        
+#         assert(False)
+            
+        
+#         assert(False)
 
         if log_images:
             self._logger.log_single_tdist_classifier_image(self.pos_pair, self.neg_pair, model_output.squeeze(),
+                                                          'tdist{}'.format("Q"), step, phase)
+            self._logger.log_heatmap_image(self.pos_pair, qvals, model_output.squeeze(),
                                                           'tdist{}'.format("Q"), step, phase)
 
     def get_device(self):
