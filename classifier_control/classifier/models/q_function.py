@@ -22,7 +22,7 @@ class QFunction(BaseModel):
         self.tdist_classifiers = []
         self.build_network()
         self._use_pred_length = False
-
+        
 
     def _default_hparams(self):
         default_dict = AttrDict({
@@ -54,21 +54,33 @@ class QFunction(BaseModel):
             images shape = batch x time x channel x height x width
         :return: model_output
         """
-        tlen = inputs.demo_seq_images.shape[1]
-        pos_pairs, neg_pairs, pos_act, neg_act = self.sample_image_triplet_actions(inputs.demo_seq_images, inputs.actions, tlen, 1, inputs.states[:, :,  :2])
-        self.images = torch.cat([pos_pairs, neg_pairs], dim=0) 
-        if self._hp.low_dim:
-            image_0 = self.images[:, :2]
-            image_g =  self.images[:, 4:]
+        #### Train vs Test
+        if "demo_seq_images" in inputs.keys():
+          tlen = inputs.demo_seq_images.shape[1]
+          pos_pairs, neg_pairs, pos_act, neg_act = self.sample_image_triplet_actions(inputs.demo_seq_images, inputs.actions, tlen, 1, inputs.states[:, :,  :2])
+          self.images = torch.cat([pos_pairs, neg_pairs], dim=0) 
+          if self._hp.low_dim:
+              image_0 = self.images[:, :2]
+              image_g =  self.images[:, 4:]
+          else:
+              image_0 = self.images[:, :3]
+              image_g =  self.images[:, 6:]
+
+          image_pairs = torch.cat([image_0, image_g], dim=1)
+          acts = torch.cat([pos_act, neg_act], dim=0)
+          self.acts = acts
+
+          qval = self.qnetwork(image_pairs, acts)
         else:
-            image_0 = self.images[:, :3]
-            image_g =  self.images[:, 6:]
-            
-        image_pairs = torch.cat([image_0, image_g], dim=1)
-        acts = torch.cat([pos_act, neg_act], dim=0)
-        self.acts = acts
-        
-        qval = self.qnetwork(image_pairs, acts)
+          qs = []
+          image_pairs = torch.cat([inputs["current_img"], inputs["goal_img"]], dim=1)
+          for ns in range(100):
+              actions = torch.FloatTensor(image_pairs.size(0), 2).uniform_(-1, 1).cuda()
+              targetq = self.target_qnetwork(image_pairs, actions)
+              qs.append(targetq)
+          qs = torch.stack(qs)
+          qval = torch.max(qs, 0)[0].squeeze()
+          qval = qval.detach().cpu().numpy()
         return qval
     
     def sample_image_triplet_actions(self, images, actions, tlen, tdist, states):
@@ -135,85 +147,50 @@ class QFunction(BaseModel):
         
         losses = AttrDict()
         target = lb + self._hp.gamma * torch.max(qs, 0)[0].squeeze()
-#         print("______________")
-#         print(self.images[:5])
-#         print(self.acts[:5])
-#         print(model_output[:5])
-#         print(target[:5])
-        
-#         print(self.images[-5:])
-#         print(self.acts[-5:])
-#         print(model_output[-5:])
-#         print(target[-5:])
-#         print("______________")
         losses.total_loss = F.mse_loss(target, model_output.squeeze()) 
         
         self.target_qnetwork.load_state_dict(self.qnetwork.state_dict())
         return losses
     
     def _log_outputs(self, model_output, inputs, losses, step, log_images, phase):
-        print(self.pos_pair_cat.shape, self.neg_pair_cat.shape)
-        print(model_output.shape, self.pos_pair.shape, self.neg_pair.shape)
-        if np.random.uniform() < 0.9:
-          return
-        
-        qvals = []
-        with torch.no_grad():
-            print("################################################")
-            for x in np.arange(-0.3, 0.3, 0.02):
-                for y in np.arange(-0.3, 0.3, 0.02):
-                    state = torch.FloatTensor([x,y]).cuda().unsqueeze(0).repeat(self.pos_pair_cat.size(0), 1)
-                    state = torch.cat([state, self.pos_pair_cat[:,4:]], 1)
-                    qs = []
-                    for ns in range(100):
-                        actions = torch.FloatTensor(self.pos_pair_cat.size(0), 2).uniform_(-1, 1).cuda()
-                        targetq = self.target_qnetwork(state, actions)
-                        qs.append(targetq)
-#                     qs, _ = torch.stack(qs).max(0)
-                    qs = torch.stack(qs).mean(0)
-                    print(state[0], qs[0])
-                    qvals.append(qs)
+      ## Heatmap Logging (WIP)
+#         qvals = []
+#         with torch.no_grad():
+#             print("################################################")
+#             for x in np.arange(-0.3, 0.3, 0.02):
+#                 for y in np.arange(-0.3, 0.3, 0.02):
+#                     state = torch.FloatTensor([x,y]).cuda().unsqueeze(0).repeat(self.pos_pair_cat.size(0), 1)
+#                     state = torch.cat([state, self.pos_pair_cat[:,4:]], 1)
+#                     qs = []
+#                     for ns in range(100):
+#                         actions = torch.FloatTensor(self.pos_pair_cat.size(0), 2).uniform_(-1, 1).cuda()
+#                         targetq = self.target_qnetwork(state, actions)
+#                         qs.append(targetq)
+# #                     qs, _ = torch.stack(qs).max(0)
+#                     qs = torch.stack(qs).mean(0)
+#                     print(state[0], qs[0])
+#                     qvals.append(qs)
                     
-            qvals = torch.stack(qvals)
-        print("################################################")
-        print(qvals.shape)
-        qvals = qvals.view(30, 30, 32)
+#             qvals = torch.stack(qvals)
+#         print("################################################")
+#         print(qvals.shape)
+#         qvals = qvals.view(30, 30, 32)
 #         print(self.pos_pair_cat[0,4:])
 #         print(qvals[:,:,0])
 #         assert(False)
 #         qvals -= qvals.min()
 #         qvals /= qvals.max()
         
-#         import matplotlib.pyplot as plt
-#         import seaborn as sns
-#         import io
-# #         import tensorflow as tf
-#         for i in range(self.pos_pair_cat.size(0)):
-#             sns.heatmap(qvals[:, :, i].cpu().numpy())
-#             plt.draw()
-
-#             # Now we can save it to a numpy array.
-#             data = np.fromstring(fig.canvas.tostring_rgb(), dtype=np.uint8, sep='')
-#             data = data.reshape(fig.canvas.get_width_height()[::-1] + (3,))
-# #             buf = io.BytesIO()
-# #             plt.savefig(buf, format='png')
-# #             buf.seek(0)
-# #             image = tf.image.decode_png(buf.getvalue(), channels=3)
-#             print(data.shape)
-        
-#         assert(False)
-            
-        
-#         assert(False)
-
         if log_images:
             self._logger.log_single_tdist_classifier_image(self.pos_pair, self.neg_pair, model_output.squeeze(),
                                                           'tdist{}'.format("Q"), step, phase)
-            self._logger.log_heatmap_image(self.pos_pair, qvals, model_output.squeeze(),
-                                                          'tdist{}'.format("Q"), step, phase)
+#             self._logger.log_heatmap_image(self.pos_pair, qvals, model_output.squeeze(),
+#                                                           'tdist{}'.format("Q"), step, phase)
 
     def get_device(self):
         return self._hp.device
+    
+    
 
 
     
@@ -230,32 +207,15 @@ class QFunctionTestTime(QFunction):
         checkpoint = torch.load(self._hp.classifier_restore_path, map_location=self._hp.device)
         self.load_state_dict(checkpoint['state_dict'])
 
-
-    def forward(self, inputs):
-        """
-        forward pass at training time
-        :param
-            images shape = batch x time x channel x height x width
-        :return: model_output
-        """
-        image_pairs = torch.cat([inputs['current_img'], inputs['goal_img']], dim=1)
-
-        qs = []
-        for ns in range(100):
-        # for ns in range(3):
-            actions = torch.FloatTensor(self._hp.batch_size, 2).uniform_(-1, 1).cuda()
-            targetq = self.qnetwork(image_pairs, actions).data.cpu().numpy().squeeze()
-            qs.append(targetq)
-        qs = np.stack(qs)
-
-        v = np.max(qs, 0)
-        cost = -v
-        return cost
-
-    def visualize_test_time(self, content_dict, visualize_indices, verbose_folder):
-        pass
-
     def _default_hparams(self):
         parent_params = super()._default_hparams()
         parent_params.add_hparam('classifier_restore_path', None)
         return parent_params
+      
+      
+    def visualize_test_time(self, content_dict, visualize_indices, verbose_folder):
+        pass
+      
+    def forward(self, inputs):
+      qvals = super().forward(inputs)
+      return -1 * qvals

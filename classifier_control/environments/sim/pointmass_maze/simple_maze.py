@@ -23,6 +23,9 @@ class SimpleMaze(BaseMujocoEnv):
     self.difficulty = _hp.difficulty
     self._hp = _hp
     
+  def default_ncam():
+    return 1
+
   def _default_hparams(self):
     default_dict = {'verbose':False, 'difficulty': None}
     parent_params = super()._default_hparams()
@@ -40,6 +43,10 @@ class SimpleMaze(BaseMujocoEnv):
     elif self.difficulty == 'h':
       self.sim.data.qpos[0] = np.random.uniform(-0.27, -0.15)
     self.sim.data.qpos[1] = np.random.uniform(-0.27, 0.27)
+    
+    self.goal = np.zeros((2,))
+    self.goal[0] = np.random.uniform(-0.27, 0.27)
+    self.goal[1] = np.random.uniform(-0.27, 0.27)
 
     # Randomize wal positions
     w1 = np.random.uniform(-0.2, 0.2)
@@ -88,7 +95,35 @@ class SimpleMaze(BaseMujocoEnv):
 
   def current_obs(self):
     return self._get_obs(finger_force)
+  
+  def get_goal(self):
+    curr_qpos = self.sim.data.qpos[:].copy()
+    self.sim.data.qpos[:] = self.goal
+    self.sim.step()
+    goalim = self.render()
+    self.sim.data.qpos[:] = curr_qpos
+    self.sim.step()
+    return goalim
+  
+  def has_goal(self):
+    return True
 
+  def goal_reached(self):
+    d = np.sqrt(np.mean((self.goal - self.sim.data.qpos[:])**2))
+    if d < 0.05:
+      return True
+    return False
+   
+  def get_distance_score(self):
+    """
+        :return:  mean of the distances between all objects and goals
+        """
+    d = np.sqrt(np.mean((self.goal - self.sim.data.qpos[:])**2))
+    print("********", d)
+    if d < 0.1:
+      return 1.0
+    else:
+      return 0.0
 
 
   

@@ -77,6 +77,7 @@ class MultiwayTempdistClassifer(BaseModel):
         :return: model_output
         """
         image_pairs = self.sample_image_pair(inputs.demo_seq_images)
+        self.img_pair = image_pairs
         model_output = self.make_prediction(image_pairs)
         return model_output
 
