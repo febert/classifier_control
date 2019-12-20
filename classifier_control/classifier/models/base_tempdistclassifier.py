@@ -50,7 +50,7 @@ class BaseTempDistClassifier(BaseModel):
     def build_network(self, build_encoder=True):
         for i in range(self._hp.ndist_max):
             tdist = i + 1
-            self.tdist_classifiers.append(self.singletempdistclassifier()(self._hp, tdist, self._logger))
+            self.tdist_classifiers.append(self.singletempdistclassifier(self._hp, tdist, self._logger))
         self.tdist_classifiers = nn.ModuleList(self.tdist_classifiers)
 
     def forward(self, inputs):

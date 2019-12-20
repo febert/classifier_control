@@ -9,7 +9,6 @@ current_dir = os.path.dirname(os.path.realpath(__file__))
 
 from visual_mpc.policy.random.sampler_policy import SamplerPolicy
 from classifier_control.cem_controllers.pytorch_classifier_controller import LearnedCostController
-from classifier_control.classifier.models.variants.base_tempdistclassifier_monotonicity import MonotonicityBaseTempDistClassifier
 
 
 env_params = {
@@ -39,7 +38,6 @@ policy = {
     'selection_frac': 0.05,
     'sampler': CorrelatedNoiseSampler,
     'initial_std': [0.05, 0.05],
-    'learned_cost': MonotonicityBaseTempDistClassifier,
     'learned_cost_model_path': os.environ['VMPC_EXP'] + '/classifier_control/distfunc_training/ensem_classifier/maze2d/weights/weights_ep199.pth',
     'verbose_every_iter': True,
     "vidpred_model_path": os.environ['VMPC_EXP'] + '/classifier_control/vidpred_training/classifier_control/2dmaze/docker_training/HDF5TrainableInterface_0_64df9460_2019-12-04_23-39-39wzv0hazq/checkpoint_45000'

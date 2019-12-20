@@ -54,6 +54,7 @@ class MonotonicityBaseTempDistClassifierTestTime(MonotonicityBaseTempDistClassif
         parent_params.add_hparam('classifier_restore_path', None)
         return parent_params
 
+    @property
     def singletempdistclassifier(self):
         return TesttimeSingleTempDistClassifier
 
