@@ -42,7 +42,7 @@ class TesttimeSingleTempDistClassifier(SingleTempDistClassifierMonotone):
         embeddings = self.encoder(image_pairs)
         embeddings = self.spatial_softmax(embeddings)
         fraction = torch.sigmoid(self.linear(embeddings))
-        model_output = AttrDict(fraction=fraction, pos_pair=self.pos_pair, neg_pair=self.neg_pair)
+        model_output = AttrDict(fraction=fraction)
         return model_output
 
 

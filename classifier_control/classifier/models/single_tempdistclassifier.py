@@ -42,7 +42,7 @@ class SingleTempDistClassifier(BaseModel):
 
         logits = self.linear(embeddings)
         self.out_sigmoid = torch.sigmoid(logits)
-        model_output = AttrDict(logits=logits, out_simoid=self.out_sigmoid, pos_pair=self.pos_pair, neg_pair=self.neg_pair)
+        model_output = AttrDict(logits=logits, out_sigmoid=self.out_sigmoid, pos_pair=self.pos_pair, neg_pair=self.neg_pair)
         return model_output
 
     def sample_image_pair(self, images, tlen, tdist):
@@ -133,7 +133,7 @@ class TesttimeSingleTempDistClassifier(SingleTempDistClassifier):
         embeddings = self.spatial_softmax(embeddings)
         logits = self.linear(embeddings)
         self.out_sigmoid = torch.sigmoid(logits)
-        model_output = AttrDict(logits=logits, out_simoid=self.out_sigmoid)
+        model_output = AttrDict(logits=logits, out_sigmoid=self.out_sigmoid)
         return model_output
 
 

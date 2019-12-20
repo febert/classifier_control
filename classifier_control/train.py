@@ -342,7 +342,7 @@ def run_through_traj(inputs, test_model):
 
         sigmoid = []
         for i in range(len(outputs)):
-            sigmoid.append(outputs[i].out_simoid.data.cpu().numpy().squeeze())
+            sigmoid.append(outputs[i].out_sigmoid.data.cpu().numpy().squeeze())
         sigmoids = np.stack(sigmoid, axis=1)
 
 

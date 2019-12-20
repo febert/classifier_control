@@ -50,7 +50,7 @@ class BaseTempDistClassifier(BaseModel):
     def build_network(self, build_encoder=True):
         for i in range(self._hp.ndist_max):
             tdist = i + 1
-            self.tdist_classifiers.append(self.singletempdistclassifier(self._hp, tdist, self._logger))
+            self.tdist_classifiers.append(self.singletempdistclassifier()(self._hp, tdist, self._logger))
         self.tdist_classifiers = nn.ModuleList(self.tdist_classifiers)
 
     def forward(self, inputs):
@@ -60,11 +60,13 @@ class BaseTempDistClassifier(BaseModel):
             images shape = batch x time x channel x height x width
         :return: model_output
         """
+        import pdb; pdb.set_trace()
+        assert False  # only for testign
+
         model_output = []
         for c in self.tdist_classifiers:
             model_output.append(c(inputs))
         return model_output
-
 
     def loss(self, model_output):
         losses = AttrDict()
@@ -101,12 +103,14 @@ class BaseTempDistClassifierTestTime(BaseTempDistClassifier):
 
         sigmoid = []
         for i in range(self._hp.ndist_max):
-            sigmoid.append(outputs[i].out_simoid.data.cpu().numpy().squeeze())
+            sigmoid.append(outputs[i].out_sigmoid.data.cpu().numpy().squeeze())
         self.sigmoids = np.stack(sigmoid, axis=1)
         sigmoids_shifted = np.concatenate((np.zeros([self._hp.batch_size, 1]), self.sigmoids[:, :-1]), axis=1)
         differences = self.sigmoids - sigmoids_shifted
         self.softmax_differences = softmax(differences, axis=1)
         expected_dist = np.sum((1 + np.arange(self.softmax_differences.shape[1])[None]) * self.softmax_differences, 1)
+
+        import pdb; pdb.set_trace()
         return expected_dist
 
     @property
@@ -138,7 +142,7 @@ class BaseTempDistClassifierTestTime(BaseTempDistClassifier):
 
             sigmoid = []
             for i in range(len(outputs)):
-                sigmoid.append(outputs[i].out_simoid.data.cpu().numpy().squeeze())
+                sigmoid.append(outputs[i].out_sigmoid.data.cpu().numpy().squeeze())
             sigmoids = np.stack(sigmoid, axis=1)
 
             sig_img_t = visualize_barplot_array(sigmoids[:n_ex])

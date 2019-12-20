@@ -120,7 +120,10 @@ class LearnedCostController(CEMBaseController):
             input_images = ten2pytrch(gen_images[:, tpred], self.device)
             inp_dict = {'current_img': input_images,
                         'goal_img': uint2pytorch(resample_imgs(self._goal_image, self.img_sz), self._hp.num_samples, self.device)}
+
+            print('peform prediction for ', tpred)
             scores.append(self.learned_cost.predict(inp_dict))
+            import pdb; pdb.set_trace()
 
         # weight final time step by some number and average over time.
         scores = np.stack(scores, 1)

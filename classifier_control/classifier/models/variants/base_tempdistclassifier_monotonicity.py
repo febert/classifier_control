@@ -22,14 +22,17 @@ class MonotonicityBaseTempDistClassifier(BaseTempDistClassifier):
         :return: model_output
         """
         model_output = []
-        accuml_fractions = torch.ones(self._hp.batch_size*2, device=self._hp.device)
+        accuml_fractions = None
         for c in self.tdist_classifiers:
             outdict = c(inputs)
+            if accuml_fractions is None:
+                accuml_fractions = torch.ones(outdict.fraction.shape[0], device=self._hp.device)
             accuml_fractions = accuml_fractions*outdict.fraction.squeeze()
             c.out_sigmoid = accuml_fractions
             outdict.logits = torch.log(accuml_fractions)
-
+            outdict.out_sigmoid = accuml_fractions
             model_output.append(outdict)
+
         return model_output
 
 from classifier_control.classifier.models.base_tempdistclassifier import BaseTempDistClassifierTestTime
@@ -53,3 +56,24 @@ class MonotonicityBaseTempDistClassifierTestTime(MonotonicityBaseTempDistClassif
 
     def singletempdistclassifier(self):
         return TesttimeSingleTempDistClassifier
+
+    def forward(self, inputs):
+        outputs = super().forward(inputs)
+
+        sigmoid = []
+        for i in range(self._hp.ndist_max):
+            import pdb; pdb.set_trace()
+            sigmoid.append(outputs[i].out_sigmoid.data.cpu().numpy().squeeze())
+        self.sigmoids = np.stack(sigmoid, axis=1)
+        sigmoids_shifted = np.concatenate((np.zeros([self._hp.batch_size, 1]), self.sigmoids[:, :-1]), axis=1)
+        differences = self.sigmoids - sigmoids_shifted
+        self.softmax_differences = softmax(differences, axis=1)
+        expected_dist = np.sum((1 + np.arange(self.softmax_differences.shape[1])[None]) * self.softmax_differences, 1)
+
+        return expected_dist
+
+def softmax(array, axis=0):
+    exp = np.exp(array)
+    exp = exp/(np.sum(exp, axis=axis)[:, None] + 1e-5)
+    return exp
+

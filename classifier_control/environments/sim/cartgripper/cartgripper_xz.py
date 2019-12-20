@@ -25,14 +25,17 @@ class CartgripperXZ(CartgripperXZGrasp):
             return False
 
     def get_distance_score(self):
+
         """
         :return:  mean of the distances between all objects and goals
         """
         mean_obj_dist = super().get_distance_score()
 
         curr_pos = self.sim.data.qpos[:self._sdim]
-        arm_obj_dist = np.linalg.norm(self._goal_arm_pose - curr_pos)
+        arm_dist_despos = np.linalg.norm(self._goal_arm_pose - curr_pos)
 
-        return (mean_obj_dist + arm_obj_dist)/2
+        print('mean_obj_dist', mean_obj_dist)
+        print('arm_dist_despos ', arm_dist_despos)
+        return (mean_obj_dist + arm_dist_despos)/2
 
 
