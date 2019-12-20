@@ -6,7 +6,7 @@ from tensorboardX import SummaryWriter
 import matplotlib.pyplot as plt
 import numpy as np
 from classifier_control.classifier.utils.vis_utils import draw_text_image
-
+import cv2
 from classifier_control.classifier.utils.vis_utils import plot_graph
 
 class Logger:
@@ -137,6 +137,62 @@ class TdistClassifierLogger(Logger):
 
         positives_image = image_row(neg_pair, neg_pred, self._n_logged_samples)
         self._summ_writer.add_image('{}_{}'.format(name + '_negatives', phase), positives_image, step)
+        
+    def log_heatmap_image(self, pos_pair, heatmap, out_sigmoid,
+                                                  name, step, phase):
+
+        pos_pair = pos_pair.data.cpu().numpy().squeeze()
+        heatmap = heatmap.permute(2, 0, 1).unsqueeze(-1).repeat(1,1,1,3).data.cpu().numpy()
+#         print(pos_pair.shape)
+#         print(heatmap.shape)
+        reshaped = []
+        for i in range(heatmap.shape[0]):
+            im = heatmap[i]
+#             print(im.shape)
+            im = cv2.resize(im, (64, 64))
+#             print(im.min(), im.max())
+            im -= im.mean()
+            im /= im.std()
+#             print(im.min(), im.max())
+            cv2.imwrite('test'+str(i)+'.png', im*255)
+#             assert(False)
+            reshaped.append(im)
+        reshaped = np.stack(reshaped)
+#         print(reshaped.shape)
+        reshaped = np.swapaxes(reshaped, 1,3)
+#         print(reshaped.shape)
+        reshaped = np.swapaxes(reshaped, 2,3)
+#         print(reshaped.shape)
+        pos_pair[:,0] = reshaped
+
+        pos_pred = out_sigmoid[:out_sigmoid.shape[0]//2].data.cpu().numpy()
+
+        def image_row(image_pairs, scores):
+
+            first_row = image_pairs[:, 0]
+            first_row = first_row[:self._n_logged_samples]
+            first_row = np.concatenate(unstack(first_row, 0), 2)
+
+            second_row = image_pairs[:, 1]
+            second_row = second_row[:self._n_logged_samples]
+            second_row = np.concatenate(unstack(second_row, 0), 2)
+
+            numbers = get_sigmoid_annotations(scores)
+
+            return (np.concatenate([first_row, second_row, numbers], 1) + 1.)/2.0
+
+        def get_sigmoid_annotations(pred_scores):
+            text_images = []
+            for b in range(self._n_logged_samples):
+                text_images.append(draw_text_image('{}'.format(pred_scores[b])).transpose(2, 0, 1))
+            return np.concatenate(text_images, 2)
+
+        positives_image = image_row(pos_pair, pos_pred)
+        
+        # import pdb; pdb.set_trace()
+        self._summ_writer.add_image('{}_{}'.format(name + '_heatmaps', phase), positives_image, step)
+
+
 
 
 from classifier_control.classifier.utils.vis_utils import visualize_barplot_array

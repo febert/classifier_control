@@ -178,7 +178,11 @@ class LearnedCostController(CEMBaseController):
     def act(self, t=None, i_tr=None, images=None, goal_image=None, verbose_worker=None, state=None):
         self._images = images
         self._verbose_worker = verbose_worker
-        self._goal_image = goal_image[-1, 0]  # pick the last time step as the goal image
+        ### Support for getting goal images from environment
+        if goal_image.shape[0] == 1:
+          self._goal_image = goal_image[0]
+        else:
+          self._goal_image = goal_image[-1, 0]  # pick the last time step as the goal image
 
         return super(LearnedCostController, self).act(t, i_tr, state)
 

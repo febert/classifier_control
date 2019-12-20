@@ -12,7 +12,7 @@ configuration = {
     'model': BaseTempDistClassifier,
     'model_test': BaseTempDistClassifierTestTime,
     'logger': TdistClassifierLogger,
-    'data_dir': os.environ['VMPC_DATA'] + '/classifier_control/data_collection/sim/1_obj_cartgripper_xz_rejsamp',       # 'directory containing data.' ,
+    'data_dir': os.environ['VMPC_DATA'] + '/classifier_control/data_collection/sim/maze_navigation',       # 'directory containing data.' ,
     'batch_size' : 32,
     # 'num_epochs': 200,
 }
