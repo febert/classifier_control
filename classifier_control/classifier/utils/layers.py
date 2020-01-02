@@ -80,6 +80,8 @@ class ConvBlock(Block):
             cls = nn.Conv2d
         elif self.params.d == 1:
             cls = nn.Conv1d
+        elif self.params.d == -2:
+            cls = nn.ConvTranspose2d
 
         self.add_module('conv', cls(
             self.params.in_dim, self.params.out_dim, self.params.kernel_size, self.params.stride, self.params.padding,
@@ -114,6 +116,17 @@ class ConvBlockEnc(ConvBlock):
             stride=2,
         ))
         return params
+      
+class ConvBlockDec(ConvBlock):
+    def get_default_params(self):
+        params = super().get_default_params()
+        params.update(AttrDict(
+            d = -2, 
+            kernel_size=4,
+            stride=2,
+        ))
+        return params
+
 
 def get_num_conv_layers(img_sz):
     n = math.log2(img_sz[0])

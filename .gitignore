@@ -12,5 +12,6 @@
 .email_cred
 *_log.txt
 data/
+.ipynb_checkpoints
 
 __pycache__/*

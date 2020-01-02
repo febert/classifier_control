@@ -22,7 +22,7 @@ env_params = {
 agent = {
     'type': BenchmarkAgent,
     'env': (SimpleMaze, env_params),
-    'T': 13,
+    'T': 50,
     'gen_xml': (True, 20),  # whether to generate xml, and how often
     # 'make_final_gif_freq':1,
     'start_goal_confs': os.environ['VMPC_DATA'] + '/classifier_control/data_collection/sim/maze_navigation/raw',

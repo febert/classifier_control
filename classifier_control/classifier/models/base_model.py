@@ -35,7 +35,8 @@ class BaseModel(nn.Module):
             'input_nc': 3,  # number of input feature maps
             'device':None,
             'data_conf':None,
-            'img_sz': None
+            'img_sz': None,
+            'goal_cond':True
         })
         
         # Network params

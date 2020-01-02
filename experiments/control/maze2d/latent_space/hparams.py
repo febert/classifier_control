@@ -9,7 +9,7 @@ current_dir = os.path.dirname(os.path.realpath(__file__))
 
 from visual_mpc.policy.random.sampler_policy import SamplerPolicy
 from classifier_control.cem_controllers.pytorch_classifier_controller import LearnedCostController
-from classifier_control.classifier.models.tempdist_regressor import TempdistRegressorTestTime
+from classifier_control.classifier.models.latent_space import LatentSpaceTestTime
 
 
 env_params = {
@@ -43,8 +43,8 @@ policy = {
     'selection_frac': 0.05,
     'sampler': CorrelatedNoiseSampler,
     'initial_std': [0.05, 0.05],
-    'learned_cost':TempdistRegressorTestTime,
-    'learned_cost_model_path': os.environ['VMPC_EXP'] + '/classifier_control/distfunc_training/tdist_regression/maze2d/weights/weights_ep100.pth',
+    'learned_cost':LatentSpaceTestTime,
+    'learned_cost_model_path': os.environ['VMPC_EXP'] + '/classifier_control/distfunc_training/latent_space_training/maze2d/weights/weights_ep199.pth',
     'verbose_every_iter': True,
     "vidpred_model_path": os.environ['VMPC_EXP'] + '/classifier_control/vidpred_training/classifier_control/2dmaze/docker_training/HDF5TrainableInterface_0_64df9460_2019-12-04_23-39-39wzv0hazq/checkpoint_45000'
 #   '/classifier_control/vidpred_training/cartgripper_xz/docker_training/HDF5TrainableInterface_0_edf90eee_2019-11-22_04-38-28qp2v6u6q/checkpoint_65000',
