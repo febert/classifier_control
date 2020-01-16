@@ -17,9 +17,10 @@ class QNetwork(torch.nn.Module):
         else:
             self.encoder = ConvEncoder(self._hp)
             out_size = self.encoder.get_output_size()
-            self.linear1 = Linear(in_dim=64*5*5, out_dim=128, builder=self._hp.builder)
+
+            self.linear1 = Linear(in_dim=out_size[0]*out_size[1]*out_size[2], out_dim=128, builder=self._hp.builder)
             
-        self.linear2 = Linear(in_dim=128 + self._hp.action_size , out_dim=1, builder=self._hp.builder)
+        self.linear2 = Linear(in_dim=128 + self._hp.action_size, out_dim=1, builder=self._hp.builder)
 #         self.linear3 = Linear(in_dim=128, out_dim=128, builder=self._hp.builder)
 #         self.linear4 = Linear(in_dim=128, out_dim=128, builder=self._hp.builder)
 #         self.linear5 = Linear(in_dim=128, out_dim=128, builder=self._hp.builder)
@@ -30,12 +31,11 @@ class QNetwork(torch.nn.Module):
             embeddings = image_pairs
         else:
             embeddings = self.encoder(image_pairs).view(image_pairs.size(0), -1)
-            
         e = F.relu(self.linear1(embeddings))
         e = torch.cat([e, actions], dim=1)
 #         e = F.relu(self.linear2(e))
 #         e = F.relu(self.linear3(e))
 #         e = F.relu(self.linear4(e))
 #         e = F.relu(self.linear5(e))
-        qvalue =  self.linear2(e) #self.linear6(e)
+        qvalue = self.linear2(e) #self.linear6(e)
         return qvalue

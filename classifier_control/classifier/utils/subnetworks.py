@@ -66,7 +66,7 @@ class ConvEncoder(nn.Module):
 
     def get_output_size(self):
         # return (self._hp.nz_enc, self._hp.img_sz[0]//(2**self.n), self._hp.img_sz[1]//(2**self.n))
-        return (64, 5, 5)   # todo calc this, fix the padding in the convs!
+        return (64, 9, 13)   # todo calc this, fix the padding in the convs!
 
     def forward(self, input):
         return self.net(input)

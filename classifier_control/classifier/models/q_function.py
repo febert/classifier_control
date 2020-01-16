@@ -32,8 +32,7 @@ class QFunction(BaseModel):
             'nz_enc': 64,
             'classifier_restore_path':None,  # not really needed here.,
             'low_dim':False,
-            'gamma':0.0
-            
+            'gamma': 0.0,
         })
 
         # add new params to parent params
@@ -139,7 +138,7 @@ class QFunction(BaseModel):
             
         qs = []
         for ns in range(100):
-            actions = torch.FloatTensor(model_output.size(0), 2).uniform_(-1, 1).cuda()
+            actions = torch.FloatTensor(model_output.size(0), self._hp.action_size).uniform_(-1, 1).cuda()
             targetq = self.target_qnetwork(image_pairs, actions)
             qs.append(targetq)
         qs = torch.stack(qs)

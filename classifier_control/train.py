@@ -23,6 +23,10 @@ from classifier_control.classifier.utils.general_utils import AttrDict
 from classifier_control.classifier.datasets.data_loader import FixLenVideoDataset
 
 from classifier_control.classifier.utils.trainer_base import BaseTrainer
+try:
+    from classifier_control.classifier.datasets.robonet_data_loader import RoboNetVideoDataset
+except ImportError:
+    print('Failed to load RoboNet dataset class, if you want to use it, you may not have installed the RoboNet package.')
 
 
 def save_checkpoint(state, folder, filename='checkpoint.pth'):
@@ -89,20 +93,35 @@ class ModelTrainer(BaseTrainer):
         model_conf['batch_size'] = self._hp.batch_size
         model_conf['device'] = self.device.type
         model_conf['data_conf'] = data_conf
-        
+
+
         def build_phase(logger, ModelClass, phase):
             logger = logger(log_dir, summary_writer=writer)
             model = ModelClass(model_conf, logger)
             model.to(self.device)
             model.device = self.device
             if phase is not 'test':
-                loader = FixLenVideoDataset(self._hp.data_dir, model._hp, data_conf, phase, shuffle=True).get_data_loader(self._hp.batch_size)
+                if self._hp.dataset == 'from_dir':
+                    loader = FixLenVideoDataset(self._hp.data_dir, model._hp, data_conf, phase, shuffle=True).get_data_loader(self._hp.batch_size)
+                elif self._hp.dataset == 'robonet':
+                    if 'robots' in self._hp.dataset_conf:
+                        from robonet.datasets import load_metadata
+                        meta_data = load_metadata(self._hp.data_dir)
+                        self._hp.dataset_conf['same_cam_across_sub_batch'] = True
+                        robonet_dataset = RoboNetVideoDataset(
+                            [meta_data[meta_data['robot'] == r] for r in self._hp.dataset_config['robots']], phase,
+                            hparams=self._hp.dataset_conf)
+                    else:
+                        robonet_dataset = RoboNetVideoDataset(self._hp.data_dir, phase, hparams=self._hp.dataset_conf)
+
+                    loader = robonet_dataset.make_dataloader(self._hp.batch_size)
                 return model, loader
             else:
                 return model
 
         self.model, self.train_loader = build_phase(self._hp.logger, self._hp.model, 'train')
         self.model_val, self.val_loader = build_phase(self._hp.logger, self._hp.model, 'val')
+
         if self._hp.model_test is not None:
             self.model_test = build_phase(self._hp.logger, self._hp.model_test, 'test')
 
@@ -206,6 +225,8 @@ class ModelTrainer(BaseTrainer):
             'logger': None,
             'logger_test': None,
             'data_dir': None, # directory where dataset is in
+            'dataset': 'from_dir', #from_dir uses 'data_dir', can choose 'robonet'
+            'dataset_conf': None,
             'batch_size': 64,
             'mpar': None,   # model parameters
             'data_conf': None,   # model parameters
@@ -247,7 +268,7 @@ class ModelTrainer(BaseTrainer):
 
     def train_epoch(self, epoch):
         self.model.train()
-        epoch_len = len(self.train_loader)
+        epoch_len = len(self.train_loader) // self.train_loader.batch_size # If this fails on RoboNet, you may need Torch 1.4
         end = time.time()
         batch_time = AverageMeter()
         upto_log_time = AverageMeter()
@@ -256,7 +277,6 @@ class ModelTrainer(BaseTrainer):
         self.log_images_interval = int(epoch_len / self.args.imepoch)
 
         print('starting epoch ', epoch)
-
         for self.batch_idx, sample_batched in enumerate(self.train_loader):
             data_load_time.update(time.time() - end)
             inputs = AttrDict(map_dict(lambda x: x.to(self.device), sample_batched))
@@ -277,7 +297,7 @@ class ModelTrainer(BaseTrainer):
             if self.log_outputs_now:
                 print('GPU {}: {}'.format(os.environ["CUDA_VISIBLE_DEVICES"] if self.use_cuda else 'none', self._hp.exp_path))
                 print(('itr: {} Train Epoch: {} [{}/{} ({:.0f}%)]\tLoss: {:.6f}'.format(
-                    self.global_step, epoch, self.batch_idx, len(self.train_loader),
+                    self.global_step, epoch, self.batch_idx, epoch_len,
                     100. * self.batch_idx / len(self.train_loader), losses.total_loss.item())))
                 
                 print('avg time for loading: {:.2f}s, logs: {:.2f}s, compute: {:.2f}s, total: {:.2f}s'
@@ -346,10 +366,5 @@ def run_through_traj(inputs, test_model):
         sigmoids = np.stack(sigmoid, axis=1)
 
 
-
-
-
-
-        
 if __name__ == '__main__':
     ModelTrainer()
