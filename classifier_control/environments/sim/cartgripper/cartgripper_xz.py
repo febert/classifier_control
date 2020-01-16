@@ -7,8 +7,12 @@ class CartgripperXZ(CartgripperXZGrasp):
         self._adim, self._sdim = 2, 2      # x z grasp
         self._gripper_dim = None
 
+        self._obj_goaldistances = []
+        self._arm_goaldistances = []
+
     def _next_qpos(self, action):
         action = np.concatenate([action, np.array([-1])])  # gripper always open
+
         return self._previous_target_qpos * self.mode_rel + action
 
     def has_goal(self):
@@ -24,7 +28,30 @@ class CartgripperXZ(CartgripperXZGrasp):
         else:
             return False
 
-    def get_distance_score(self):
+    def _reset_eval(self):
+        if self._obj_goaldistances is not None:
+            obj_dist, arm_dist = self.get_distance_score(average=False)
+            self._obj_goaldistances = [obj_dist]
+            self._arm_goaldistances = [arm_dist]
+
+    def eval(self, target_width=None, save_dir=None, ntasks=None):
+        obj_dist, arm_dist = self.get_distance_score(average=False)
+
+        self._obj_goaldistances.append(obj_dist)
+        self._arm_goaldistances.append(arm_dist)
+
+        stats = {}
+        def get_stats(prefix, dists_list):
+            assert len(dists_list) > 1
+            stats[prefix + '/improvement'] = dists_list[0] - dists_list[-1]
+            stats[prefix + '/initial_dist'] = dists_list[0]
+            stats[prefix + '/final_dist'] = dists_list[-1]
+
+        get_stats('obj', self._obj_goaldistances)
+        get_stats('arm', self._arm_goaldistances)
+        return stats
+
+    def get_distance_score(self, average=True):
 
         """
         :return:  mean of the distances between all objects and goals
@@ -34,8 +61,11 @@ class CartgripperXZ(CartgripperXZGrasp):
         curr_pos = self.sim.data.qpos[:self._sdim]
         arm_dist_despos = np.linalg.norm(self._goal_arm_pose - curr_pos)
 
-        print('mean_obj_dist', mean_obj_dist)
-        print('arm_dist_despos ', arm_dist_despos)
-        return (mean_obj_dist + arm_dist_despos)/2
+        # print('mean_obj_dist', mean_obj_dist)
+        # print('arm_dist_despos ', arm_dist_despos)
+        if average:
+            return (mean_obj_dist + arm_dist_despos)/2
+        else:
+            return mean_obj_dist, arm_dist_despos
 
 

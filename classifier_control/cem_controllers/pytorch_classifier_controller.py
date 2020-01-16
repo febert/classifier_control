@@ -123,7 +123,6 @@ class LearnedCostController(CEMBaseController):
 
             print('peform prediction for ', tpred)
             scores.append(self.learned_cost.predict(inp_dict))
-            import pdb; pdb.set_trace()
 
         # weight final time step by some number and average over time.
         scores = np.stack(scores, 1)

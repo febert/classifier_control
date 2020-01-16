@@ -60,9 +60,6 @@ class BaseTempDistClassifier(BaseModel):
             images shape = batch x time x channel x height x width
         :return: model_output
         """
-        import pdb; pdb.set_trace()
-        assert False  # only for testign
-
         model_output = []
         for c in self.tdist_classifiers:
             model_output.append(c(inputs))
@@ -110,7 +107,6 @@ class BaseTempDistClassifierTestTime(BaseTempDistClassifier):
         self.softmax_differences = softmax(differences, axis=1)
         expected_dist = np.sum((1 + np.arange(self.softmax_differences.shape[1])[None]) * self.softmax_differences, 1)
 
-        import pdb; pdb.set_trace()
         return expected_dist
 
     @property
