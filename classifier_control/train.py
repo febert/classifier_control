@@ -94,7 +94,6 @@ class ModelTrainer(BaseTrainer):
         model_conf['device'] = self.device.type
         model_conf['data_conf'] = data_conf
 
-
         def build_phase(logger, ModelClass, phase):
             logger = logger(log_dir, summary_writer=writer)
             model = ModelClass(model_conf, logger)
@@ -114,7 +113,7 @@ class ModelTrainer(BaseTrainer):
                     else:
                         robonet_dataset = RoboNetVideoDataset(self._hp.data_dir, phase, hparams=self._hp.dataset_conf)
 
-                    loader = robonet_dataset.make_dataloader(self._hp.batch_size)
+                    loader = robonet_dataset.make_dataloader(self._hp.batch_size, n_workers=8)
                 return model, loader
             else:
                 return model
@@ -278,6 +277,8 @@ class ModelTrainer(BaseTrainer):
 
         print('starting epoch ', epoch)
         for self.batch_idx, sample_batched in enumerate(self.train_loader):
+            if sample_batched['actions'].shape[0] < self.train_loader.batch_size:
+                continue
             data_load_time.update(time.time() - end)
             inputs = AttrDict(map_dict(lambda x: x.to(self.device), sample_batched))
 
@@ -321,6 +322,8 @@ class ModelTrainer(BaseTrainer):
             losses_meter = RecursiveAverageMeter()
             with autograd.no_grad():
                 for batch_idx, sample_batched in enumerate(self.val_loader):
+                    if sample_batched['actions'].shape[0] < self.train_loader.batch_size:
+                        continue
                     inputs = AttrDict(map_dict(lambda x: x.to(self.device), sample_batched))
 
                     output = self.model_val(inputs)
