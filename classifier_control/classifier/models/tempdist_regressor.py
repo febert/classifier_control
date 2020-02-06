@@ -134,10 +134,11 @@ class TempdistRegressorTestTime(TempdistRegressor):
         """
         image_pairs = torch.stack([inputs['current_img'], inputs['goal_img']], dim=1)
         expected_distance = self.make_prediction(image_pairs).tdist_estimates.data.cpu().numpy().squeeze()
+        self.expected_dist = expected_distance
         return expected_distance
 
     def visualize_test_time(self, content_dict, visualize_indices, verbose_folder):
-        pass
+        content_dict['tdist_regression'] = self.expected_dist[visualize_indices]
 
     # def vis_dist_over_traj(self, inputs, step):
     #     images = inputs.demo_seq_images

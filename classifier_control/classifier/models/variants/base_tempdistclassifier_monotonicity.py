@@ -63,7 +63,6 @@ class MonotonicityBaseTempDistClassifierTestTime(MonotonicityBaseTempDistClassif
 
         sigmoid = []
         for i in range(self._hp.ndist_max):
-            import pdb; pdb.set_trace()
             sigmoid.append(outputs[i].out_sigmoid.data.cpu().numpy().squeeze())
         self.sigmoids = np.stack(sigmoid, axis=1)
         sigmoids_shifted = np.concatenate((np.zeros([self._hp.batch_size, 1]), self.sigmoids[:, :-1]), axis=1)

@@ -74,7 +74,7 @@ class QFunction(BaseModel):
           qs = []
           image_pairs = torch.cat([inputs["current_img"], inputs["goal_img"]], dim=1)
           for ns in range(100):
-              actions = torch.FloatTensor(image_pairs.size(0), 2).uniform_(-1, 1).cuda()
+              actions = torch.FloatTensor(image_pairs.size(0), self._hp.action_size).uniform_(-1, 1).cuda()
               targetq = self.target_qnetwork(image_pairs, actions)
               qs.append(targetq)
           qs = torch.stack(qs)
@@ -211,10 +211,11 @@ class QFunctionTestTime(QFunction):
         parent_params.add_hparam('classifier_restore_path', None)
         return parent_params
       
-      
     def visualize_test_time(self, content_dict, visualize_indices, verbose_folder):
-        pass
-      
+        sel_qvals = self.qvals[visualize_indices]
+        content_dict['q_value'] = sel_qvals
+
     def forward(self, inputs):
       qvals = super().forward(inputs)
+      self.qvals = qvals
       return -1 * qvals
