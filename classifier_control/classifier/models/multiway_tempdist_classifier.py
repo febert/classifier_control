@@ -139,7 +139,7 @@ class TesttimeMultiwayTempdistClassifier(MultiwayTempdistClassifer):
         # save classifier preds
         sel_softmax= self.out_softmax[visualize_indices]
         sigmoid_images = visualize_barplot_array(sel_softmax)
-        row_name = 'softmax'
+        row_name = 'multiway_softmax'
         content_dict[row_name] = save_imgs_direct(verbose_folder,
                                                   row_name, sigmoid_images)
 
