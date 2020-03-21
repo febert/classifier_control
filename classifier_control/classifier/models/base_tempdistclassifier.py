@@ -64,9 +64,6 @@ class BaseTempDistClassifier(BaseModel):
             images shape = batch x time x channel x height x width
         :return: model_output
         """
-#         import pdb; pdb.set_trace()
-#         assert False  # only for testign
-
         model_output = []
         for c in self.tdist_classifiers:
             model_output.append(c(inputs))

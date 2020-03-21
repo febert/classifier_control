@@ -34,6 +34,7 @@ class SingleTempDistClassifier(BaseModel):
         :return: model_output
         """
 
+        import pdb; pdb.set_trace()
         tlen = inputs.demo_seq_images.shape[1]
         pos_pairs, neg_pairs = self.sample_image_pair(inputs.demo_seq_images, tlen, self.tdist)
         image_pairs = torch.cat([pos_pairs, neg_pairs], dim=0)
