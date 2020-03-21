@@ -12,6 +12,10 @@ import os
 import yaml
 
 
+from classifier_control.environments.sim.pointmass_maze.simple_maze import SimpleMaze
+import cv2
+
+
 class BaseTempDistClassifier(BaseModel):
     def __init__(self, overrideparams, logger=None):
         super().__init__(logger)
@@ -60,8 +64,8 @@ class BaseTempDistClassifier(BaseModel):
             images shape = batch x time x channel x height x width
         :return: model_output
         """
-        import pdb; pdb.set_trace()
-        assert False  # only for testign
+#         import pdb; pdb.set_trace()
+#         assert False  # only for testign
 
         model_output = []
         for c in self.tdist_classifiers:
@@ -99,6 +103,7 @@ class BaseTempDistClassifierTestTime(BaseTempDistClassifier):
 
 
     def forward(self, inputs):
+#         self.gen_pairs()
         outputs = super().forward(inputs)
 
         sigmoid = []
@@ -110,8 +115,76 @@ class BaseTempDistClassifierTestTime(BaseTempDistClassifier):
         self.softmax_differences = softmax(differences, axis=1)
         expected_dist = np.sum((1 + np.arange(self.softmax_differences.shape[1])[None]) * self.softmax_differences, 1)
 
-        import pdb; pdb.set_trace()
         return expected_dist
+
+    def gen_pairs(self):
+      '''HEATMAP GENERATION'''
+      env_params = env_params = {
+          # resolution sufficient for 16x anti-aliasing
+          'viewer_image_height': 48,
+          'viewer_image_width': 64,
+      #     'difficulty': 'm',
+      }
+      env = SimpleMaze(env_params)
+      env.reset()
+      goalim = env.get_goal()[0] / 255.
+      goalim = goalim * 2
+      goalim -= 1
+      goalim = cv2.resize(goalim, (64, 64), interpolation=cv2.INTER_CUBIC)
+      vals = []
+      trs = range(-30, 30, 2)
+      ims = []
+      for x in trs:
+        print(x)
+        v = []
+        for y in trs:
+          env.sim.data.qpos[0] = x / 100.0
+          env.sim.data.qpos[1] = y / 100.0
+          env.sim.step()
+          currim = env.render()[0] / 255.
+          currim = currim * 2
+          currim -= 1
+          currim = cv2.resize(currim, (64, 64), interpolation=cv2.INTER_CUBIC)
+          v.append(currim)
+        ims.append(v)
+      ims = np.array(ims)
+      print(ims.shape)
+      ims = ims.reshape(-1, 64, 64, 3, order='F')
+          
+      inputs = {
+        'current_img': torch.FloatTensor(ims).cuda().permute(0, 3, 1, 2), 
+        'goal_img': torch.FloatTensor(goalim).cuda().unsqueeze(0).permute(0, 3, 1, 2).repeat(900, 1, 1, 1)
+      }
+#       qval = super().forward(inputs) 
+      outputs = super().forward(inputs)
+
+      sigmoid = []
+      for i in range(self._hp.ndist_max):
+        sigmoid.append(outputs[i].out_sigmoid.data.cpu().numpy().squeeze())
+      self.sigmoids = np.stack(sigmoid, axis=1)
+      sigmoids_shifted = np.concatenate((np.zeros([900, 1]), self.sigmoids[:, :-1]), axis=1)
+      differences = self.sigmoids - sigmoids_shifted
+      self.softmax_differences = softmax(differences, axis=1)
+      qval = np.sum((1 + np.arange(self.softmax_differences.shape[1])[None]) * self.softmax_differences, 1)
+
+      qv = qval.reshape(30, 30, 1)
+      qv = qv.repeat(3, -1)
+      qv -= qv.min()
+      qv /= qv.max()
+      qv = 1 - qv
+      
+      qv *= 255.0
+      qv = cv2.resize(qv, (64, 64), interpolation=cv2.INTER_CUBIC)
+      
+      goalim -= goalim.min()
+      goalim /= goalim.max()
+
+      print(qv.min(), qv.max())
+      print(goalim.shape, qv.shape)
+      cv2.imwrite('ims/goal.png', goalim*255.0)
+      cv2.imwrite('ims/h.png', qv)
+      assert(False)
+          
 
     @property
     def singletempdistclassifier(self):
