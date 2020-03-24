@@ -75,7 +75,7 @@ class QFunction(BaseModel):
           qs = []
           image_pairs = torch.cat([inputs["current_img"], inputs["goal_img"]], dim=1)
           for ns in range(100):
-              actions = torch.FloatTensor(image_pairs.size(0), 2).uniform_(-1, 1).cuda()
+              actions = torch.FloatTensor(image_pairs.size(0), self._hp.action_size).uniform_(-1, 1).cuda()
               targetq = self.target_qnetwork(image_pairs, actions)
               qs.append(targetq)
           qs = torch.stack(qs)
@@ -139,7 +139,7 @@ class QFunction(BaseModel):
             
         qs = []
         for ns in range(100):
-            actions = torch.FloatTensor(model_output.size(0), 2).uniform_(-1, 1).cuda()
+            actions = torch.FloatTensor(model_output.size(0), self._hp.action_size).uniform_(-1, 1).cuda()
             targetq = self.target_qnetwork(image_pairs, actions)
             qs.append(targetq)
         qs = torch.stack(qs)
