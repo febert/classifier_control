@@ -23,20 +23,20 @@ env_params = {
 agent = {
     'type': GeneralAgent,
     'env': (Tabletop, env_params),
-    'T': 100,
+    'T': 30,
     'make_final_gif_freq':100
 }
 
 policy = {
     'type' : SamplerPolicy,
     'nactions': 100,
-    'initial_std':  [0.3, 0.3, 0.3, 0.3],
+    'initial_std':  [0.6, 0.6, 0.3, 0.3],
 }
 
 config = {
     'traj_per_file':1,  #28,
     'current_dir' : current_dir,
-    'start_index':0,
+    'start_index':9000,
     'end_index': 10000,
     'agent': agent,
     'policy': policy,
