@@ -58,12 +58,21 @@ class MultiwayTempdistClassifer(BaseModel):
         t0 = np.random.randint(0, tlen, self._hp.batch_size)
         t1 = np.array([np.random.randint(t0[b], tlen, 1) for b in range(images.shape[0])]).squeeze()
 
+        if self._hp.use_mixup:
+            t0_prime = np.array([np.random.randint(t0[b], t1[b]+1, 1) for b in range(images.shape[0])]).squeeze()
+            t0_prime = torch.from_numpy(t0_prime)
+
         t0, t1 = torch.from_numpy(t0), torch.from_numpy(t1)
 
         im_t0 = select_indices(images, t0)
         im_t1 = select_indices(images, t1)
 
         self.labels = torch.clamp_max(t1 - t0, self._hp.tmax_label-1)
+
+        if self._hp.use_mixup:
+            im_t0_prime = select_indices(images, t0_prime)
+            self.labels = self.labels, torch.clamp_max(t1 - t0_prime, self._hp.tmax_label-1)
+            im_t0, self.lam = self.mixup_reg(im_t0, im_t0_prime)
 
         img_pair_stack = torch.stack([im_t0, im_t1], dim=1)
         return img_pair_stack
@@ -93,10 +102,17 @@ class MultiwayTempdistClassifer(BaseModel):
         if log_images:
             self._logger.log_pair_predictions(self.img_pair, self.out_softmax, self.labels,'tdist_regression', step, phase)
 
-
     def loss(self, model_output):
         losses = AttrDict()
-        setattr(losses, 'cross_entropy', torch.nn.CrossEntropyLoss()(model_output.logits, self.labels.to(self._hp.device)))
+        if self._hp.use_mixup:
+            ce_wo_red = torch.nn.CrossEntropyLoss(reduction='none')
+            ce_loss = self.lam * ce_wo_red(model_output.logits, self.labels[0].to(self._hp.device)) + \
+                      (1-self.lam) * ce_wo_red(model_output.logits, self.labels[1].to(self._hp.device))
+            ce_loss = torch.mean(ce_loss)
+            self.labels = self.mixup_reg.convex_comb(self.labels[0].cuda(), self.labels[1].cuda(), self.lam)
+        else:
+            ce_loss = torch.nn.CrossEntropyLoss()(model_output.logits, self.labels.to(self._hp.device))
+        setattr(losses, 'cross_entropy', ce_loss)
 
         # compute total loss
         losses.total_loss = torch.stack(list(losses.values())).sum()
@@ -136,7 +152,7 @@ class TesttimeMultiwayTempdistClassifier(MultiwayTempdistClassifer):
 
     def visualize_test_time(self, content_dict, visualize_indices, verbose_folder):
         # save classifier preds
-        sel_softmax= self.out_softmax[visualize_indices]
+        sel_softmax = self.out_softmax[visualize_indices]
         sigmoid_images = visualize_barplot_array(sel_softmax)
         row_name = 'softmax'
         content_dict[row_name] = save_imgs_direct(verbose_folder,
