@@ -3,6 +3,7 @@ import numpy as np
 from PIL import Image
 import glob
 import h5py
+import pickle as pkl
 import random
 import pdb
 import matplotlib.pyplot as plt
@@ -97,19 +98,40 @@ class FixLenVideoDataset(BaseVideoDataset):
         with h5py.File(path, 'r') as F:
             return F['traj0']['images'].value.shape[0]
 
+    def _get_num_from_str(self, s):
+        return int(''.join(filter(str.isdigit, s)))
+
+
+    def get_extra_obs(self, traj_ind):
+        main_dir = self.data_dir
+        raw_dir = os.path.join(main_dir, 'raw')
+        group_dir = os.path.join(raw_dir, f'traj_group{traj_ind//1000}')
+        obs_path = os.path.join(os.path.join(group_dir, f'traj{traj_ind}'), 'obs_dict.pkl')
+        with open(obs_path, 'rb') as f:
+            obs_data = pkl.load(f)
+        return obs_data
+
+
     def __getitem__(self, index):
         file_index = index // self.traj_per_file
         path = self.filenames[file_index]
+        start_ind_str, _ = path.split('/')[-1][:-3].split('to')
+        start_ind = self._get_num_from_str(start_ind_str)
 
         with h5py.File(path, 'r') as F:
             ex_index = index % self.traj_per_file  # get the index
             key = 'traj{}'.format(ex_index)
+
+            traj_ind = start_ind + ex_index
+            extra_obs = self.get_extra_obs(traj_ind)
 
             # Fetch data into a dict
             data_dict = AttrDict(images=(F[key + '/images'].value))
             for name in F[key].keys():
                 if name in ['states', 'actions', 'pad_mask']:
                     data_dict[name] = F[key + '/' + name].value.astype(np.float32)
+
+            data_dict['gripper'] = extra_obs['gripper'].astype(np.float32)
 
         data_dict = self.process_data_dict(data_dict)
         if self._data_conf.sel_len != -1:

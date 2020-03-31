@@ -52,7 +52,6 @@ class MultiwayTempdistClassifer(BaseModel):
 
 
     def sample_image_pair(self, images):
-
         tlen = images.shape[1]
 
         # get positives:

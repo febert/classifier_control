@@ -73,7 +73,6 @@ class BaseTempDistClassifier(BaseModel):
         losses = AttrDict()
         for i_cl, cl in enumerate(self.tdist_classifiers):
             setattr(losses, 'tdist{}'.format(cl.tdist), cl.loss(model_output[i_cl]))
-
         # compute total loss
         losses.total_loss = torch.stack(list(losses.values())).sum()
         return losses
@@ -107,10 +106,12 @@ class BaseTempDistClassifierTestTime(BaseTempDistClassifier):
         for i in range(self._hp.ndist_max):
             sigmoid.append(outputs[i].out_sigmoid.data.cpu().numpy().squeeze())
         self.sigmoids = np.stack(sigmoid, axis=1)
-        sigmoids_shifted = np.concatenate((np.zeros([self._hp.batch_size, 1]), self.sigmoids[:, :-1]), axis=1)
-        differences = self.sigmoids - sigmoids_shifted
-        self.softmax_differences = softmax(differences, axis=1)
-        expected_dist = np.sum((1 + np.arange(self.softmax_differences.shape[1])[None]) * self.softmax_differences, 1)
+        #sigmoids_shifted = np.concatenate((np.zeros([self._hp.batch_size, 1]), self.sigmoids[:, :-1]), axis=1)
+        #differences = self.sigmoids - sigmoids_shifted
+        #self.softmax_differences = softmax(differences, axis=1)
+        #expected_dist = np.sum((1 + np.arange(self.softmax_differences.shape[1])[None]) * self.softmax_differences, 1)
+        tail_probs = 1 - self.sigmoids
+        expected_dist = 1 + np.sum(tail_probs, axis=1)
 
         return expected_dist
 

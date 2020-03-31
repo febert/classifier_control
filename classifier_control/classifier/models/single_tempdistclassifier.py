@@ -34,20 +34,18 @@ class SingleTempDistClassifier(BaseModel):
         :return: model_output
         """
 
-        import pdb; pdb.set_trace()
+        #import pdb; pdb.set_trace()
         tlen = inputs.demo_seq_images.shape[1]
         pos_pairs, neg_pairs = self.sample_image_pair(inputs.demo_seq_images, tlen, self.tdist)
         image_pairs = torch.cat([pos_pairs, neg_pairs], dim=0)
         embeddings = self.encoder(image_pairs)
         embeddings = self.spatial_softmax(embeddings)
-
         logits = self.linear(embeddings)
         self.out_sigmoid = torch.sigmoid(logits)
         model_output = AttrDict(logits=logits, out_sigmoid=self.out_sigmoid, pos_pair=self.pos_pair, neg_pair=self.neg_pair)
         return model_output
 
     def sample_image_pair(self, images, tlen, tdist):
-
         # get positives:
         t0 = np.random.randint(0, tlen - tdist - 1, self._hp.batch_size)
         t1 = t0 + 1 + np.random.randint(0, tdist, self._hp.batch_size)

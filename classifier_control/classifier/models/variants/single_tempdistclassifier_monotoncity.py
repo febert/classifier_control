@@ -12,7 +12,6 @@ class SingleTempDistClassifierMonotone(SingleTempDistClassifier):
             images shape = batch x time x channel x height x width
         :return: model_output
         """
-
         tlen = inputs.demo_seq_images.shape[1]
         pos_pairs, neg_pairs = self.sample_image_pair(inputs.demo_seq_images, tlen, self.tdist)
         image_pairs = torch.cat([pos_pairs, neg_pairs], dim=0)
@@ -23,7 +22,14 @@ class SingleTempDistClassifierMonotone(SingleTempDistClassifier):
         return model_output
 
     def loss(self, model_output):
-        return self.cross_ent_loss(model_output.logits, self.labels.to(self._hp.device))
+        if torch.isnan(model_output.logits).any():
+            print(f'NaN in logits of {self.tdist}')
+            import ipdb; ipdb.set_trace()
+        loss = self.cross_ent_loss(model_output.logits, self.labels.to(self._hp.device))
+        if torch.isnan(loss).any():
+            print(f'NaN in loss of {self.tdist}')
+            import ipdb; ipdb.set_trace()
+        return loss
 
 
 class TesttimeSingleTempDistClassifier(SingleTempDistClassifierMonotone):

@@ -26,11 +26,13 @@ class MonotonicityBaseTempDistClassifier(BaseTempDistClassifier):
         for c in self.tdist_classifiers:
             outdict = c(inputs)
             if accuml_fractions is None:
-                accuml_fractions = torch.ones(outdict.fraction.shape[0], device=self._hp.device)
-            accuml_fractions = accuml_fractions*outdict.fraction.squeeze()
-            c.out_sigmoid = accuml_fractions
-            outdict.logits = torch.log(accuml_fractions)
-            outdict.out_sigmoid = accuml_fractions
+                accuml_fractions = torch.zeros(outdict.fraction.shape[0], device=self._hp.device)
+            accuml_fractions = accuml_fractions + (1-accuml_fractions)*outdict.fraction.squeeze()
+            c.out_sigmoid = accuml_fractions.clone()
+            #outdict.logits = torch.log(accuml_fractions)
+            # TODO: Stephen thinks this is right?
+            outdict.logits = torch.log((accuml_fractions+1e-5) / (1-accuml_fractions+1e-5))
+            outdict.out_sigmoid = accuml_fractions.clone()
             model_output.append(outdict)
 
         return model_output
@@ -63,15 +65,19 @@ class MonotonicityBaseTempDistClassifierTestTime(MonotonicityBaseTempDistClassif
 
         sigmoid = []
         for i in range(self._hp.ndist_max):
-            import pdb; pdb.set_trace()
             sigmoid.append(outputs[i].out_sigmoid.data.cpu().numpy().squeeze())
         self.sigmoids = np.stack(sigmoid, axis=1)
-        sigmoids_shifted = np.concatenate((np.zeros([self._hp.batch_size, 1]), self.sigmoids[:, :-1]), axis=1)
-        differences = self.sigmoids - sigmoids_shifted
-        self.softmax_differences = softmax(differences, axis=1)
-        expected_dist = np.sum((1 + np.arange(self.softmax_differences.shape[1])[None]) * self.softmax_differences, 1)
+        #sigmoids_shifted = np.concatenate((np.zeros([self._hp.batch_size, 1]), self.sigmoids[:, :-1]), axis=1)
+        #differences = self.sigmoids - sigmoids_shifted
+        #self.softmax_differences = softmax(differences, axis=1)
+        #expected_dist = np.sum((1 + np.arange(self.softmax_differences.shape[1])[None]) * self.softmax_differences, 1)
+
+        ## ST: Use tail sum formula to avoid numerical instability?
+        tail_probs = 1 - self.sigmoids
+        expected_dist = 1 + np.sum(tail_probs, axis=1)
 
         return expected_dist
+
 
 def softmax(array, axis=0):
     exp = np.exp(array)

@@ -1,13 +1,10 @@
-from contextlib import contextmanager
 import numpy as np
-import pdb
 import torch
-from classifier_control.classifier.utils.general_utils import AttrDict
-import torch.nn as nn
 import torch.nn.functional as F
-
 from classifier_control.classifier.models.base_model import BaseModel
+from classifier_control.classifier.utils.general_utils import AttrDict
 from classifier_control.classifier.utils.q_network import QNetwork
+
 
 class QFunction(BaseModel):
     def __init__(self, overrideparams, logger=None):
@@ -29,11 +26,12 @@ class QFunction(BaseModel):
             'use_skips':False, #todo try resnet architecture!
             'ngf': 8,
             'action_size': 2,
+            'state_size': 30,
             'nz_enc': 64,
             'classifier_restore_path':None,  # not really needed here.,
             'low_dim':False,
-            'gamma':0.0
-            
+            'gamma':0.0,
+            'terminal': False,
         })
 
         # add new params to parent params
@@ -56,31 +54,36 @@ class QFunction(BaseModel):
         """
         #### Train vs Test
         if "demo_seq_images" in inputs.keys():
-          tlen = inputs.demo_seq_images.shape[1]
-          pos_pairs, neg_pairs, pos_act, neg_act = self.sample_image_triplet_actions(inputs.demo_seq_images, inputs.actions, tlen, 1, inputs.states[:, :,  :2])
-          self.images = torch.cat([pos_pairs, neg_pairs], dim=0) 
-          if self._hp.low_dim:
-              image_0 = self.images[:, :2]
-              image_g =  self.images[:, 4:]
-          else:
-              image_0 = self.images[:, :3]
-              image_g =  self.images[:, 6:]
+            tlen = inputs.demo_seq_images.shape[1]
+            pos_pairs, neg_pairs, pos_act, neg_act = self.sample_image_triplet_actions(inputs.demo_seq_images,
+                                                                                       inputs.actions, tlen, 1,
+                                                                                       inputs.states)
+            self.images = torch.cat([pos_pairs, neg_pairs], dim=0)
+            if self._hp.low_dim:
+                image_0 = self.images[:, :self._hp.state_size]
+                image_g = self.images[:, 2 * self._hp.state_size:]
+            else:
+                image_0 = self.images[:, :3]
+                image_g = self.images[:, 6:]
 
-          image_pairs = torch.cat([image_0, image_g], dim=1)
-          acts = torch.cat([pos_act, neg_act], dim=0)
-          self.acts = acts
+            image_pairs = torch.cat([image_0, image_g], dim=1)
+            acts = torch.cat([pos_act, neg_act], dim=0)
+            self.acts = acts
 
-          qval = self.qnetwork(image_pairs, acts)
+            qval = self.qnetwork(image_pairs, acts)
         else:
-          qs = []
-          image_pairs = torch.cat([inputs["current_img"], inputs["goal_img"]], dim=1)
-          for ns in range(100):
-              actions = torch.FloatTensor(image_pairs.size(0), self._hp.action_size).uniform_(-1, 1).cuda()
-              targetq = self.target_qnetwork(image_pairs, actions)
-              qs.append(targetq)
-          qs = torch.stack(qs)
-          qval = torch.max(qs, 0)[0].squeeze()
-          qval = qval.detach().cpu().numpy()
+            qs = []
+            if self._hp.low_dim:
+                image_pairs = torch.cat([inputs["current_state"], inputs['goal_state']], dim=1)
+            else:
+                image_pairs = torch.cat([inputs["current_img"], inputs["goal_img"]], dim=1)
+            for ns in range(100):
+                actions = torch.FloatTensor(image_pairs.size(0), self._hp.action_size).uniform_(-1, 1).cuda()
+                targetq = self.target_qnetwork(image_pairs, actions)
+                qs.append(targetq)
+            qs = torch.stack(qs)
+            qval = torch.max(qs, 0)[0].squeeze()
+            qval = qval.detach().cpu().numpy()
         return qval
     
     def sample_image_triplet_actions(self, images, actions, tlen, tdist, states):
@@ -98,7 +101,6 @@ class QFunction(BaseModel):
         s_t1 = select_indices(states, t1)
         s_tg = select_indices(states, tg)
         pos_act = select_indices(actions, t0)
-
         self.pos_pair = torch.stack([im_t0, im_tg], dim=1)
         if self._hp.low_dim:
             self.pos_pair_cat = torch.cat([s_t0, s_t1, s_tg], dim=1)
@@ -133,7 +135,7 @@ class QFunction(BaseModel):
 
     def loss(self, model_output):
         if self._hp.low_dim:
-            image_pairs = self.images[:, 2:]
+            image_pairs = self.images[:, self._hp.state_size:]
         else:
             image_pairs = self.images[:, 3:]
             
@@ -146,8 +148,11 @@ class QFunction(BaseModel):
         lb = self.labels.to(self._hp.device)
         
         losses = AttrDict()
-        target = lb + self._hp.gamma * torch.max(qs, 0)[0].squeeze()
-        losses.total_loss = F.mse_loss(target, model_output.squeeze()) 
+        if self._hp.terminal:
+            target = lb + self._hp.gamma * torch.max(qs, 0)[0].squeeze() * (1-lb) #terminal value
+        else:
+            target = lb + self._hp.gamma * torch.max(qs, 0)[0].squeeze()
+        losses.total_loss = F.mse_loss(target, model_output.squeeze())
         
         self.target_qnetwork.load_state_dict(self.qnetwork.state_dict())
         return losses
@@ -190,10 +195,7 @@ class QFunction(BaseModel):
     def get_device(self):
         return self._hp.device
     
-    
 
-
-    
 def select_indices(tensor, indices):
     new_images = []
     for b in range(tensor.shape[0]):
@@ -201,21 +203,28 @@ def select_indices(tensor, indices):
     tensor = torch.stack(new_images, dim=0)
     return tensor
 
+
 class QFunctionTestTime(QFunction):
     def __init__(self, overrideparams, logger=None):
         super(QFunctionTestTime, self).__init__(overrideparams, logger)
-        checkpoint = torch.load(self._hp.classifier_restore_path, map_location=self._hp.device)
-        self.load_state_dict(checkpoint['state_dict'])
+        if self._hp.classifier_restore_path is not None:
+            checkpoint = torch.load(self._hp.classifier_restore_path, map_location=self._hp.device)
+            self.load_state_dict(checkpoint['state_dict'])
+        else:
+            print('#########################')
+            print("Warning Q function weights not restored during init!!")
+            print('#########################')
 
     def _default_hparams(self):
         parent_params = super()._default_hparams()
         parent_params.add_hparam('classifier_restore_path', None)
         return parent_params
       
-      
     def visualize_test_time(self, content_dict, visualize_indices, verbose_folder):
         pass
       
     def forward(self, inputs):
-      qvals = super().forward(inputs)
-      return -1 * qvals
+        qvals = super().forward(inputs)
+        # Compute the log to get the units to be in timesteps
+        timesteps = np.log(np.clip(qvals, 1e-5, 1)) / np.log(self._hp.gamma)
+        return timesteps + 1

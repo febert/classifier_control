@@ -1,12 +1,13 @@
 import os
 from classifier_control.classifier.utils.general_utils import AttrDict
 current_dir = os.path.dirname(os.path.realpath(__file__))
-from classifier_control.classifier.models.tempdist_regressor import TempdistRegressor
+from classifier_control.classifier.models.tempdist_regressor import TempdistRegressor, TempdistRegressorTestTime
 from classifier_control.classifier.utils.logger import TdistRegressorLogger
 
 
 configuration = {
     'model': TempdistRegressor,
+    'model_test': TempdistRegressorTestTime,
     'logger': TdistRegressorLogger,
     'data_dir': os.environ['VMPC_DATA'] + '/classifier_control/data_collection/sim/tabletop',       # 'directory containing data.' ,
     'batch_size' : 32,

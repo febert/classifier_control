@@ -5,13 +5,12 @@ current_dir = os.path.dirname(os.path.realpath(__file__))
 from classifier_control.classifier.models.base_tempdistclassifier import BaseTempDistClassifier
 from classifier_control.classifier.models.base_tempdistclassifier import BaseTempDistClassifierTestTime
 # from experiments.control.sim.multiroom2d import env_benchmark_conf
-from classifier_control.classifier.models.variants.base_tempdistclassifier_monotonicity import MonotonicityBaseTempDistClassifier, MonotonicityBaseTempDistClassifierTestTime
 
 import imp
 
 configuration = {
-    'model': MonotonicityBaseTempDistClassifier,
-    'model_test': MonotonicityBaseTempDistClassifierTestTime,
+    'model': BaseTempDistClassifier,
+    'model_test': BaseTempDistClassifierTestTime,
     'logger': TdistClassifierLogger,
     'data_dir': os.environ['VMPC_DATA'] + '/classifier_control/data_collection/sim/tabletop',       # 'directory containing data.' ,
     'batch_size' : 32,
