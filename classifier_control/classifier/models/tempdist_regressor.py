@@ -62,12 +62,22 @@ class TempdistRegressor(BaseModel):
         t0 = np.random.randint(0, tlen, self._hp.batch_size)
         t1 = np.array([np.random.randint(t0[b], tlen, 1) for b in range(images.shape[0])]).squeeze()
 
+        if self._hp.use_mixup:
+            t0_prime = np.array([np.random.randint(t0[b], t1[b]+1, 1) for b in range(images.shape[0])]).squeeze()
+            t0_prime = torch.from_numpy(t0_prime)
+
         t0, t1 = torch.from_numpy(t0), torch.from_numpy(t1)
 
         im_t0 = select_indices(images, t0)
         im_t1 = select_indices(images, t1)
 
-        self.labels = torch.clamp_max(t1 - t0, self._hp.tmax_label).type(torch.FloatTensor)
+        self.labels = torch.clamp_max(t1 - t0, self._hp.tmax_label-1)
+
+        if self._hp.use_mixup:
+            im_t0_prime = select_indices(images, t0_prime)
+            labels_prime = torch.clamp_max(t1 - t0_prime, self._hp.tmax_label-1)
+            im_t0, self.lam = self.mixup_reg(im_t0, im_t0_prime)
+            self.labels = self.mixup_reg.convex_comb(self.labels.cuda(), labels_prime.cuda(), self.lam)
 
         img_pair_stack = torch.stack([im_t0, im_t1], dim=1)
         return img_pair_stack

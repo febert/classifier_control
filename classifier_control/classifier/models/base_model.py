@@ -8,6 +8,7 @@ import torch.nn as nn
 from classifier_control.classifier.utils.layers import LayerBuilderParams
 from tensorflow.contrib.training import HParams
 from classifier_control.classifier.utils.general_utils import AttrDict
+from classifier_control.classifier.utils.mixup_regularization import MixupRegularizer
 
 
 class BaseModel(nn.Module):
@@ -36,7 +37,7 @@ class BaseModel(nn.Module):
             'device':None,
             'data_conf':None,
             'img_sz': None,
-            'goal_cond':True
+            'goal_cond':True,
         })
         
         # Network params
@@ -44,6 +45,8 @@ class BaseModel(nn.Module):
             'use_convs': True,
             'use_batchnorm': True,  # TODO deprecate
             'normalization': 'batch',
+            'use_mixup': False,
+            'mixup_alpha': 0.4,
         })
 
         # add new params to parent params
@@ -57,6 +60,8 @@ class BaseModel(nn.Module):
         self._hp.add_hparam('builder', LayerBuilderParams(
             self._hp.use_convs, self._hp.use_batchnorm, self._hp.normalization))
         self._hp.img_sz = self._hp.data_conf['img_sz']
+        if self._hp.use_mixup:
+            self.mixup_reg = MixupRegularizer(self._hp.mixup_alpha)
 
     def build_network(self):
         raise NotImplementedError("Need to implement this function in the subclass!")

@@ -70,6 +70,12 @@ Usage:
     <texture name="light_wood_v3" file="../textures/light_wood_v3.png" type="2d"/>
     <material shininess=".1" name="light_wood_v3" texture="light_wood_v3" specular="0.4"/>
 
+    <texture name="metal" file="../textures/metal.png" type="2d"/>
+    <material shininess=".1" name="metal" texture="metal" specular="0.4"/>
+
+    <texture name="marble2" file="../textures/marble.png" type="2d"/>
+    <material shininess=".1" name="marble2" texture="marble2" specular="0.4"/>
+
     <texture builtin="gradient" height="256" rgb1=".9 .9 1." rgb2=".2 .3 .4" type="skybox" width="256"/>
   </asset>
 
@@ -130,7 +136,6 @@ Usage:
                user="0"/>
         <geom solref="0.02 1"
               solimp="1 1 0"
-             
               />
         <motor ctrllimited="true" ctrlrange="-1 1"/>
         <position ctrllimited="true"/>

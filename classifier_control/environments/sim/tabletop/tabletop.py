@@ -19,16 +19,19 @@ class Tabletop(BaseMujocoEnv, SawyerXYZEnv):
     obj_low=(-0.3, 0.4, 0.1)
     obj_high=(0.3, 0.8, 0.3)
     
-    dirname = os.path.dirname(__file__)
-    filename = os.path.join(dirname, "assets/sawyer_xyz/sawyer_multiobject.xml")
+    dirname = '/'.join(os.path.abspath(__file__).split('/')[:-1])
     params_dict = copy.deepcopy(env_params_dict)
     _hp = self._default_hparams()
     for name, value in params_dict.items():
       print('setting param {} to value {}'.format(name, value))
       _hp.set_hparam(name, value)
-      
+
+    if _hp.textured:
+        filename = os.path.join(dirname, "assets/sawyer_xyz/sawyer_multiobject_textured.xml")
+    else:
+        filename = os.path.join(dirname, "assets/sawyer_xyz/sawyer_multiobject.xml")
+
     BaseMujocoEnv.__init__(self, filename, _hp)
-    
     SawyerXYZEnv.__init__(
             self,
             frame_skip=5,
@@ -49,7 +52,11 @@ class Tabletop(BaseMujocoEnv, SawyerXYZEnv):
     return 1
 
   def _default_hparams(self):
-    default_dict = {'verbose':False, 'difficulty': None}
+    default_dict = {
+        'verbose':False,
+        'difficulty': None,
+        'textured': True,
+    }
     parent_params = super()._default_hparams()
     for k in default_dict.keys():
       parent_params.add_hparam(k, default_dict[k])
@@ -174,3 +181,19 @@ class Tabletop(BaseMujocoEnv, SawyerXYZEnv):
     ogpos = qpos[start_id:(start_id+2)]
     dist = np.linalg.norm(ogpos - self._state_goal)
     return dist
+
+if __name__ == '__main__':
+    env_params = {
+      # resolution sufficient for 16x anti-aliasing
+      'viewer_image_height': 48,
+      'viewer_image_width': 64,
+      'textured': True
+      #     'difficulty': 'm',
+    }
+    env = Tabletop(env_params)
+    env.reset()
+    import ipdb; ipdb.set_trace()
+    img = env.render()[0]
+    import matplotlib.pyplot as plt
+    plt.imshow(img)
+    plt.show()
