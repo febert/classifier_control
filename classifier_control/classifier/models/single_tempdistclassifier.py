@@ -10,6 +10,8 @@ from classifier_control.classifier.utils.spatial_softmax import SpatialSoftmax
 from classifier_control.classifier.models.base_model import BaseModel
 from classifier_control.classifier.utils.layers import Linear
 
+from classifier_control.classifier.utils.mixup_regularization import MixupRegularizer
+
 
 class SingleTempDistClassifier(BaseModel):
     def __init__(self, hp, tdist, logger):
@@ -17,6 +19,9 @@ class SingleTempDistClassifier(BaseModel):
         self._hp = hp
         self.tdist = tdist
         self.build_network()
+
+        if self._hp.use_mixup:
+            self.mixup_reg = MixupRegularizer(self._hp.mixup_alpha)
 
     def build_network(self, build_encoder=True):
         self.encoder = ConvEncoder(self._hp)
@@ -45,7 +50,75 @@ class SingleTempDistClassifier(BaseModel):
         model_output = AttrDict(logits=logits, out_sigmoid=self.out_sigmoid, pos_pair=self.pos_pair, neg_pair=self.neg_pair)
         return model_output
 
+
+    def sample_mixup_pairs(self, images, tlen, tdist):
+
+        # choose goal indices
+        t1 = np.random.randint(tdist+1, tlen, self._hp.batch_size)
+
+        # get positives:
+        t0_pos = np.array([np.random.randint(t1[b]-tdist, t1[b], 1) for b in range(images.shape[0])]).squeeze()
+        t0_pos_prime = np.array([np.random.randint(t1[b]-tdist, t1[b], 1) for b in range(images.shape[0])]).squeeze()
+        t0_pos, t0_pos_prime, t1 = torch.from_numpy(t0_pos), torch.from_numpy(t0_pos_prime), torch.from_numpy(t1)
+
+        # print('t0', t0)
+        # print('t1', t1)
+        # print('t1 - t0', t1 - t0)
+
+        im_t0_pos = select_indices(images, t0_pos)
+        im_t0_pos_prime = select_indices(images, t0_pos_prime)
+        im_t1 = select_indices(images, t1)
+
+        # get negatives:
+
+        t0_neg = np.array([np.random.randint(0, t1[b]-tdist, 1) for b in range(images.shape[0])]).squeeze()
+        t0_neg_prime = np.array([np.random.randint(0, t1[b]-tdist, 1) for b in range(images.shape[0])]).squeeze()
+        t0_neg, t0_neg_prime = torch.from_numpy(t0_neg), torch.from_numpy(t0_neg_prime)
+
+        # print('--------------')
+        # print('t0', t0)
+        # print('t1', t1)
+        # print('t1 - t0', t1 - t0)
+
+        im_t0_neg = select_indices(images, t0_neg)
+        im_t0_neg_prime = select_indices(images, t0_neg_prime)
+
+        total_images = torch.cat([im_t0_pos, im_t0_pos_prime, im_t0_neg, im_t0_neg_prime], dim=0)
+        total_labels = torch.cat(2*[torch.ones(self._hp.batch_size)] + 2*[torch.zeros(self._hp.batch_size)], dim=0)
+
+        random_indices = np.random.choice(total_images.shape[0], total_images.shape[0]//2, replace=False)  # Pick two indices to be one convex comb
+
+        def get_cvx_comb_imgs_lbls(indices):
+            comb_0 = total_images[indices]
+            indices_comp = np.setdiff1d(np.arange(total_images.shape[0]), indices)
+            comb_1 = total_images[indices_comp]
+            comb, lam = self.mixup_reg(comb_0, comb_1)
+            labels = self.mixup_reg.convex_comb(total_labels[indices].cuda(), total_labels[indices_comp].cuda(), lam)
+            return comb, labels
+
+        comb, labels = get_cvx_comb_imgs_lbls(random_indices)
+
+        comb_1 = comb[:comb.shape[0]//2]
+        comb_2 = comb[comb.shape[0]//2:]
+
+        # Note that pos_pair and neg_pair don't really have any semantic meaning here anymore
+        # They are just filled in so things don't break down the line
+        self.pos_pair = torch.stack([comb_1, im_t1], dim=1)
+        pos_pair_cat = torch.cat([comb_1, im_t1], dim=1)
+
+        self.neg_pair = torch.stack([comb_2, im_t1], dim=1)
+        neg_pair_cat = torch.cat([comb_2, im_t1], dim=1)
+
+        # one means within range of tdist range,  zero means outside of tdist range
+        self.labels = labels
+        return pos_pair_cat, neg_pair_cat
+
+
     def sample_image_pair(self, images, tlen, tdist):
+
+        if self._hp.use_mixup:
+            return self.sample_mixup_pairs(images, tlen, tdist)
+
         # get positives:
         t0 = np.random.randint(0, tlen - tdist - 1, self._hp.batch_size)
         t1 = t0 + 1 + np.random.randint(0, tdist, self._hp.batch_size)
