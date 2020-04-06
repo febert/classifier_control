@@ -196,11 +196,11 @@ class BaseTempDistClassifierTestTime(BaseTempDistClassifier):
         content_dict[row_name] = save_imgs_direct(verbose_folder,
                                                   row_name, sigmoid_images)
 
-        sel_softmax_dists = self.softmax_differences[visualize_indices]
-        sigmoid_images = visualize_barplot_array(sel_softmax_dists)
-        row_name = 'softmax_of_differences'
-        content_dict[row_name] = save_imgs_direct(verbose_folder,
-                                                  row_name, sigmoid_images)
+        # sel_softmax_dists = self.softmax_differences[visualize_indices]
+        # sigmoid_images = visualize_barplot_array(sel_softmax_dists)
+        # row_name = 'softmax_of_differences'
+        # content_dict[row_name] = save_imgs_direct(verbose_folder,
+        #                                           row_name, sigmoid_images)
 
     def vis_dist_over_traj(self, inputs, step):
         images = inputs.demo_seq_images
