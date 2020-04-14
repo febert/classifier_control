@@ -30,11 +30,11 @@ class SpatialSoftmax(torch.nn.Module):
     def forward(self, feature):
         # Output:
         #   (N, C*2) x_0 y_0 ...
+
         if self.data_format == 'NHWC':
             feature = feature.transpose(1, 3).tranpose(2, 3).view(-1, self.height * self.width)
         else:
             feature = feature.view(-1, self.height * self.width)
-
         softmax_attention = F.softmax(feature / self.temperature, dim=-1)
         expected_x = torch.sum(Variable(self._pos_x) * softmax_attention, dim=1, keepdim=True)
         expected_y = torch.sum(Variable(self._pos_y) * softmax_attention, dim=1, keepdim=True)

@@ -94,7 +94,8 @@ class ModelTrainer(BaseTrainer):
             logger = logger(log_dir, summary_writer=writer)
             model = ModelClass(model_conf, logger)
             model.to(self.device)
-            model.device = self.device
+            #model.device = self.device
+            model.device = torch.device('cpu')
             if phase is not 'test':
                 loader = FixLenVideoDataset(self._hp.data_dir, model._hp, data_conf, phase, shuffle=True).get_data_loader(self._hp.batch_size)
                 return model, loader
@@ -228,13 +229,14 @@ class ModelTrainer(BaseTrainer):
         for epoch in range(start_epoch, self._hp.num_epochs):
             if epoch > start_epoch:
                 self.val(not (epoch - start_epoch) % 3)
-            save_checkpoint({
-                'epoch': epoch,
-                'global_step': self.global_step,
-                'state_dict': self.model.state_dict(),
-                'optimizer': self.optimizer.state_dict(),
-            },  os.path.join(self._hp.exp_path, 'weights'), CheckpointHandler.get_ckpt_name(epoch))
-            self.model.dump_params(self._hp.exp_path)
+            if epoch % 5 == 0:
+                save_checkpoint({
+                    'epoch': epoch,
+                    'global_step': self.global_step,
+                    'state_dict': self.model.state_dict(),
+                    'optimizer': self.optimizer.state_dict(),
+                },  os.path.join(self._hp.exp_path, 'weights'), CheckpointHandler.get_ckpt_name(epoch))
+                self.model.dump_params(self._hp.exp_path)
             self.train_epoch(epoch)
 
     @property
@@ -247,6 +249,7 @@ class ModelTrainer(BaseTrainer):
 
     def train_epoch(self, epoch):
         self.model.train()
+        self.model.to(torch.device('cuda'))
         epoch_len = len(self.train_loader)
         end = time.time()
         batch_time = AverageMeter()
@@ -290,29 +293,63 @@ class ModelTrainer(BaseTrainer):
             
             del output, losses
             self.global_step = self.global_step + 1
-    
+        self.model.to(torch.device('cpu'))
+
     def val(self, test_control=True):
         print('Running Testing')
         if self.args.test_prediction:
             start = time.time()
+            self.model_val.to(torch.device('cuda'))
             self.model_val.load_state_dict(self.model.state_dict())
             if self._hp.model_test is not None:
                 self.model_test.load_state_dict(self.model.state_dict())
             losses_meter = RecursiveAverageMeter()
             with autograd.no_grad():
+
+                preds = []
+                idx_dists = []
+                gripper_dists = []
+                obj_dists = []
+                robot_joint_dists = []
+                mse_dists = []
+
                 for batch_idx, sample_batched in enumerate(self.val_loader):
                     inputs = AttrDict(map_dict(lambda x: x.to(self.device), sample_batched))
 
                     output = self.model_val(inputs)
                     losses = self.model_val.loss(output)
 
-                    if self._hp.model_test is not None:
-                        run_through_traj(self.model_test, inputs)
+                    if self._hp.model_test is not None and self.run_testmetrics:
+                        #run_through_traj(self.model_test, inputs)
+                        preds.append(get_pred_dists(inputs, self.model_test))
+                        idx_dists.append(get_idx_dists(inputs))
+                        gripper_dists.append(get_gripper_dists(inputs))
+                        obj_dists.append(get_object_dists(inputs))
+                        robot_joint_dists.append(get_robot_joint_dists(inputs))
+                        mse_dists.append(get_mse_dists(inputs))
 
                     losses_meter.update(losses)
                     del losses
 
                 if self.run_testmetrics:
+                    print(
+                        f'Corr for index dist: {summarize_correlations(np.concatenate(preds), np.concatenate(idx_dists))}')
+                    print(
+                        f'Corr for gripper dist: {summarize_correlations(np.concatenate(preds), np.concatenate(gripper_dists))}')
+                    print(
+                        f'Corr for object dist: {summarize_correlations(np.concatenate(preds), np.concatenate(obj_dists))}')
+                    print(
+                        f'Corr for robot joint dist: {summarize_correlations(np.concatenate(preds), np.concatenate(robot_joint_dists))}')
+                    print(
+                        f'Corr for mse dist: {summarize_correlations(np.concatenate(preds), np.concatenate(mse_dists))}')
+                    print(
+                        f'Corr gripper dist / index: {summarize_correlations(np.concatenate(idx_dists), np.concatenate(gripper_dists))}')
+                    print(
+                        f'Corr object dist / index: {summarize_correlations(np.concatenate(idx_dists), np.concatenate(obj_dists))}')
+                    print(
+                        f'Corr mse dist / index: {summarize_correlations(np.concatenate(idx_dists), np.concatenate(mse_dists))}')
+                    print(
+                        f'Index dist / index: {summarize_correlations(np.concatenate(idx_dists), np.concatenate(idx_dists))}')
                     print("Finished Evaluation! Exiting...")
                     exit(0)
 
@@ -321,7 +358,8 @@ class ModelTrainer(BaseTrainer):
                 print(('\nTest set: Average loss: {:.4f} in {:.2f}s\n'
                        .format(losses_meter.avg.total_loss.item(), time.time() - start)))
             del output
-        
+        self.model_val.to(torch.device('cpu'))
+
     def get_optimizer_class(self):
         if self._hp.optimizer == 'adam':
             optim = partial(Adam, betas=(self._hp.adam_beta, 0.999))
@@ -334,22 +372,83 @@ def save_config(conf_path, exp_conf_path):
     copy(conf_path, exp_conf_path)
 
 
+def summarize_correlations(preds, true):
+    corr_mat = np.corrcoef(preds, true)
+    return corr_mat[0, 1]
+
+
+def get_pred_dists(inputs, test_model):
+    images = inputs.demo_seq_images
+    states = inputs.states
+    t_outputs = []
+    for t in range(images.shape[0]):
+        outputs = test_model({'current_img': images[t], 'goal_img': images[t, -1][None].repeat(images.shape[1], 1, 1, 1),
+                              'current_state': states[t], 'goal_state': states[t, -1][None].repeat(images.shape[1], 1)})
+        t_outputs.append(outputs[-10:])
+    return np.concatenate(t_outputs)
+
+
+def get_idx_dists(inputs):
+    images = inputs.demo_seq_images
+    t_real = []
+    for t in range(images.shape[0]):
+        true_dists = np.arange(images.shape[1])[::-1]
+        t_real.append(true_dists[-10:])
+    return np.concatenate(t_real)
+
+
+def get_mse_dists(inputs):
+    images = inputs.demo_seq_images
+    mses = []
+    for t in range(images.shape[0]):
+        final_image = images[t][-1]
+        mse_errors = torch.mean((images[t] - final_image)**2, axis=[1, 2, 3]).cpu().numpy()
+        mses.append(mse_errors[-10:])
+    return np.concatenate(mses)
+
+
+def get_gripper_dists(inputs):
+    gripper_vals = inputs.gripper
+    gripper_dists = []
+    for t in range(gripper_vals.shape[0]):
+        final_gripper_pos = gripper_vals[t][-1]
+        gripper_errors = torch.sqrt(torch.sum((gripper_vals[t] - final_gripper_pos)**2, axis=1)).cpu().numpy()
+        gripper_dists.append(gripper_errors[-10:])
+    return np.concatenate(gripper_dists)
+
+
+def get_object_dists(inputs):
+    object_vals = inputs.states[:, :, 9:16]
+    object_dists = []
+    for t in range(object_vals.shape[0]):
+        final_obj_pos = object_vals[t][-1]
+        obj_errors = torch.sqrt(torch.sum((object_vals[t] - final_obj_pos)**2, axis=1)).cpu().numpy()
+        object_dists.append(obj_errors[-10:])
+    return np.concatenate(object_dists)
+
+
+def get_robot_joint_dists(inputs):
+    object_vals = inputs.states[:, :, :9]
+    object_dists = []
+    for t in range(object_vals.shape[0]):
+        final_obj_pos = object_vals[t][-1]
+        obj_errors = torch.sqrt(torch.sum((object_vals[t] - final_obj_pos)**2, axis=1)).cpu().numpy()
+        object_dists.append(obj_errors[-10:])
+    return np.concatenate(object_dists)
+
+
 def run_through_traj(inputs, test_model):
     images = inputs.demo_seq_images
 
     for t in range(images.shape[0]):
         outputs = test_model({'current_img':images, 'goal_img':images[:, -1]})
 
-        sigmoid = []
-        for i in range(len(outputs)):
-            sigmoid.append(outputs[i].out_sigmoid.data.cpu().numpy().squeeze())
-        sigmoids = np.stack(sigmoid, axis=1)
+        #
+        # sigmoid = []
+        # for i in range(len(outputs)):
+        #     sigmoid.append(outputs[i].out_sigmoid.data.cpu().numpy().squeeze())
+        # sigmoids = np.stack(sigmoid, axis=1)
 
 
-
-
-
-
-        
 if __name__ == '__main__':
     ModelTrainer()

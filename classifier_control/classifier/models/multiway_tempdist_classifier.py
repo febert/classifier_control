@@ -6,6 +6,7 @@ import numpy as np
 import torch
 from classifier_control.classifier.utils.general_utils import AttrDict
 import torch.nn as nn
+import torch.nn.functional as F
 from classifier_control.classifier.models.base_model import BaseModel
 from classifier_control.classifier.models.single_tempdistclassifier import SingleTempDistClassifier
 from classifier_control.classifier.models.utils.utils import select_indices
@@ -47,9 +48,15 @@ class MultiwayTempdistClassifer(BaseModel):
     def build_network(self, build_encoder=True):
         self.encoder = ConvEncoder(self._hp)
         out_size = self.encoder.get_output_size()
-        self.spatial_softmax = SpatialSoftmax(out_size[1], out_size[2], out_size[0])  # height, width, channel
-        self.linear = Linear(in_dim=out_size[0]*2, out_dim=self._hp.tmax_label, builder=self._hp.builder)
-
+        if self._hp.spatial_softmax:
+            self.spatial_softmax = SpatialSoftmax(out_size[1], out_size[2], out_size[0])  # height, width, channel
+            self.linear = Linear(in_dim=out_size[0]*2, out_dim=self._hp.tmax_label, builder=self._hp.builder)
+        else:
+            self.linear = Linear(in_dim=128, out_dim=self._hp.tmax_label, builder=self._hp.builder)
+            self.linear2 = Linear(in_dim=out_size[0]*out_size[1]*out_size[2], out_dim=128, builder=self._hp.builder)
+            self.linear3 = Linear(in_dim=128, out_dim=128, builder=self._hp.builder)
+            self.linear4 = Linear(in_dim=128, out_dim=128, builder=self._hp.builder)
+            self.linear5 = Linear(in_dim=128, out_dim=128, builder=self._hp.builder)
 
     def sample_image_pair(self, images):
         tlen = images.shape[1]
@@ -92,7 +99,15 @@ class MultiwayTempdistClassifer(BaseModel):
     def make_prediction(self, image_pairs_stacked):
         im_t0, im_t1 = image_pairs_stacked[:,0], image_pairs_stacked[:,1]
         embeddings = self.encoder(torch.cat([im_t0, im_t1], dim=1))
-        embeddings = self.spatial_softmax(embeddings)
+        if self._hp.spatial_softmax:
+            embeddings = self.spatial_softmax(embeddings)
+        else:
+            embeddings = torch.flatten(embeddings, start_dim=1)
+            embeddings = F.relu(self.linear2(embeddings))
+            embeddings = F.relu(self.linear3(embeddings))
+            embeddings = F.relu(self.linear4(embeddings))
+            embeddings = F.relu(self.linear5(embeddings))
+
         logits = self.linear(embeddings)
         self.out_softmax = torch.softmax(logits, dim=1)
         model_output = AttrDict(logits=logits, out_softmax=self.out_softmax, img_pair=image_pairs_stacked)

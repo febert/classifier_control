@@ -98,10 +98,10 @@ def unstack(array, dim):
     return arr
 
 
-def get_text_row(pred_scores, _n_logged_samples):
+def get_text_row(pred_scores, _n_logged_samples, shape=(30, 64)):
     text_images = []
     for b in range(_n_logged_samples):
-        text_images.append(draw_text_image('{}'.format(pred_scores[b])).transpose(2, 0, 1))
+        text_images.append(draw_text_image('{}'.format(pred_scores[b]), image_size=shape).transpose(2, 0, 1))
     return np.concatenate(text_images, 2)
 
 
@@ -127,7 +127,7 @@ class TdistClassifierLogger(Logger):
             second_row = second_row[:_n_logged_samples]
             second_row = np.concatenate(unstack(second_row, 0), 2)
 
-            numbers = get_text_row(scores, _n_logged_samples)
+            numbers = get_text_row(scores, _n_logged_samples, shape=(30, image_pairs[0, 0].shape[1]))
 
             return (np.concatenate([first_row, second_row, numbers], 1) + 1.)/2.0
 
@@ -217,8 +217,7 @@ class TdistMultiwayClassifierLogger(Logger):
         pred_score_images = [np.transpose((img.astype(np.float32))/255., [2,0,1]) for img in pred_score_images]
         pred_row = np.concatenate(pred_score_images, axis=2)
 
-
-        label_row = get_text_row(label, self._n_logged_samples)
+        label_row = get_text_row(label, self._n_logged_samples, shape=(30, pred_score_images[0].shape[1]))
 
         full_image = (np.concatenate([first_row, second_row, pred_row, label_row], 1) + 1.)/2.0
 

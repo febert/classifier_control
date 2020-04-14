@@ -13,5 +13,5 @@
 *_log.txt
 data/
 .ipynb_checkpoints
-
+*.DS_STORE
 __pycache__/*
