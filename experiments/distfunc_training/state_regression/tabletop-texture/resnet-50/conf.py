@@ -8,7 +8,7 @@ from classifier_control.classifier.utils.logger import Logger
 configuration = {
     'model': StateRegressor,
     'logger': Logger,
-    'data_dir': os.environ['VMPC_DATA'] + '/classifier_control/data_collection/sim/tabletop-texture',       # 'directory containing data.' ,
+    'data_dir': os.environ['VMPC_DATA'] + '/classifier_control/data_collection/sim/tabletop-texture-large',       # 'directory containing data.' ,
     'batch_size': 32,
 }
 

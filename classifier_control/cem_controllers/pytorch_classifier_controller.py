@@ -17,14 +17,18 @@ LOG_SHIFT = 1e-5
 import cv2
 
 def resample_imgs(images, img_size):
+    if images.shape[-1] > img_size[-1]:
+        interp_type = cv2.INTER_AREA
+    else:
+        interp_type = cv2.INTER_CUBIC
     if len(images.shape) == 5:
         resized_images = np.zeros([images.shape[0], 1, img_size[0], img_size[1], 3], dtype=np.uint8)
         for t in range(images.shape[0]):
             resized_images[t] = \
-            cv2.resize(images[t].squeeze(), (img_size[1], img_size[0]), interpolation=cv2.INTER_CUBIC)[None]
+            cv2.resize(images[t].squeeze(), (img_size[1], img_size[0]), interpolation=interp_type)[None]
         return resized_images
     elif len(images.shape) == 3:
-        return cv2.resize(images, (img_size[1], img_size[0]), interpolation=cv2.INTER_CUBIC)
+        return cv2.resize(images, (img_size[1], img_size[0]), interpolation=interp_type)
 
 class LearnedCostController(CEMBaseController):
     """

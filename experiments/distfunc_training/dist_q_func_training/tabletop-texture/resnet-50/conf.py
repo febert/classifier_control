@@ -11,7 +11,11 @@ import imp
 configuration = {
     'model': DistQFunction,
     'logger': TdistClassifierLogger,
+<<<<<<< Updated upstream
     'data_dir': os.environ['VMPC_DATA'] + '/classifier_control/data_collection/sim/tabletop-texture',       # 'directory containing data.' ,
+=======
+    'data_dir': os.environ['VMPC_DATA'] + '/classifier_control/data_collection/sim/tabletop-texture-large',       # 'directory containing data.' ,
+>>>>>>> Stashed changes
     'batch_size' : 32,
 #     'num_epochs': 200,
 }

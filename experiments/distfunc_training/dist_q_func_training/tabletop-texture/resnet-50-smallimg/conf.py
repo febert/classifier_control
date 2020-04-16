@@ -28,5 +28,4 @@ model_config = {
     'gamma':0.8,
     'action_size': 4,
     'resnet': True
-
 }

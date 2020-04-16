@@ -206,15 +206,30 @@ class Tabletop(BaseMujocoEnv, SawyerXYZEnv):
 if __name__ == '__main__':
     env_params = {
       # resolution sufficient for 16x anti-aliasing
-      'viewer_image_height': 48,
-      'viewer_image_width': 64,
+      'viewer_image_height': 192,
+      'viewer_image_width': 256,
       'textured': True
       #     'difficulty': 'm',
     }
     env = Tabletop(env_params)
     env.reset()
+    env.targetobj = 2
+    init_pos = np.array([
+        0,
+        0.2
+    ])
+    env.obj_init_pos = init_pos
+    env._set_obj_xyz(env.obj_init_pos)
     import ipdb; ipdb.set_trace()
-    img = env.render()[0]
+
     import matplotlib.pyplot as plt
-    plt.imshow(img)
-    plt.show()
+    for i, coord in enumerate(np.linspace(-0.1, 0.1, 21)):
+        env.targetobj = 0
+        init_pos = np.array([
+            coord,
+            0.2
+        ])
+        env.obj_init_pos = init_pos
+        env._set_obj_xyz(env.obj_init_pos)
+        img = env.render()[0]
+        plt.imsave(f'./examples/im_{i}.png', img)
