@@ -3,6 +3,7 @@ import copy
 import torch
 from classifier_control.classifier.utils.general_utils import AttrDict
 import torch.nn as nn
+import torch.nn.functional as F
 import pdb
 from classifier_control.classifier.utils.subnetworks import ConvEncoder
 from classifier_control.classifier.utils.spatial_softmax import SpatialSoftmax
@@ -28,7 +29,10 @@ class SingleTempDistClassifier(BaseModel):
         out_size = self.encoder.get_output_size()
         self.spatial_softmax = SpatialSoftmax(out_size[1], out_size[2], out_size[0])  # height, width, channel
         self.linear = Linear(in_dim=out_size[0]*2, out_dim=1, builder=self._hp.builder)
-
+        if not self._hp.spatial_softmax:
+            self.linear2 = Linear(in_dim=out_size[0]*out_size[1]*out_size[2], out_dim=128, builder=self._hp.builder)
+            self.linear3 = Linear(in_dim=128, out_dim=128, builder=self._hp.builder)
+            self.linear4 = Linear(in_dim=128, out_dim=512, builder=self._hp.builder)
         self.cross_ent_loss = nn.BCEWithLogitsLoss()
 
     def forward(self, inputs):
@@ -44,7 +48,13 @@ class SingleTempDistClassifier(BaseModel):
         pos_pairs, neg_pairs = self.sample_image_pair(inputs.demo_seq_images, tlen, self.tdist)
         image_pairs = torch.cat([pos_pairs, neg_pairs], dim=0)
         embeddings = self.encoder(image_pairs)
-        embeddings = self.spatial_softmax(embeddings)
+        if self._hp.spatial_softmax:
+            embeddings = self.spatial_softmax(embeddings)
+        else:
+            embeddings = torch.flatten(embeddings, start_dim=1)
+            embeddings = F.relu(self.linear2(embeddings))
+            embeddings = F.relu(self.linear3(embeddings))
+            embeddings = F.relu(self.linear4(embeddings))
         logits = self.linear(embeddings)
         self.out_sigmoid = torch.sigmoid(logits)
         model_output = AttrDict(logits=logits, out_sigmoid=self.out_sigmoid, pos_pair=self.pos_pair, neg_pair=self.neg_pair)

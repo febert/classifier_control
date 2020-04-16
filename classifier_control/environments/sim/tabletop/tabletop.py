@@ -96,7 +96,7 @@ class Tabletop(BaseMujocoEnv, SawyerXYZEnv):
     def get_site_pos(self, siteName):
         _id = self.model.site_names.index(siteName)
         return self.data.site_xpos[_id].copy()
-  
+
     def reset(self, reset_state=None):
         self._reset_hand()
 
@@ -114,14 +114,14 @@ class Tabletop(BaseMujocoEnv, SawyerXYZEnv):
                 )
                 self.obj_init_pos = init_pos
                 self._set_obj_xyz(self.obj_init_pos)
-
-        for _ in range(100):
-            self.do_simulation([0.0, 0.0])
+                for _ in range(100):
+                    self.do_simulation([0.0, 0.0])
         #self.targetobj = np.random.randint(3)
         #self.sample_goal()
 
         #place = self.targetobj
         #self.curr_path_length = 0
+        self._obs_history = []
         o = self._get_obs()
         self._reset_eval()
 
@@ -142,10 +142,7 @@ class Tabletop(BaseMujocoEnv, SawyerXYZEnv):
         super(Tabletop, self).set_goal(goal_obj_pose, goal_arm_pose)
 
     def get_mean_obj_dist(self):
-        distances = []
-        for i in range(3):
-            dist = np.linalg.norm(self.data.qpos.flat[9+i*2:9+(i+1)*2] - self._goal_obj_pose[i*2:(i+1)*2])
-            distances.append(dist)
+        distances = self.compute_object_dists(self.sim.data.qpos.flat[9:], self._goal_obj_pose)
         return np.mean(distances)
 
     def get_distance_score(self):
@@ -158,13 +155,27 @@ class Tabletop(BaseMujocoEnv, SawyerXYZEnv):
         print(f'Distance score is {mean_obj_dist}')
         return mean_obj_dist
 
+    def has_goal(self):
+        return True
+
+    def compute_object_dists(self, qpos1, qpos2):
+        distances = []
+        for i in range(3):
+            dist = np.linalg.norm(qpos1[i*2:(i+1)*2] - qpos2[i*2:(i+1)*2])
+            distances.append(dist)
+        return distances
+
+    def goal_reached(self):
+        og_pos = self._obs_history[0]['qpos']
+        object_dists = self.compute_object_dists(og_pos[9:], self.sim.data.qpos.flat[9:])
+        return max(object_dists) > 0.15
+
     def _get_obs(self):
         obs = {}
         #joint poisitions and velocities
         obs['qpos'] = copy.deepcopy(self.sim.data.qpos[:].squeeze())
         obs['qvel'] = copy.deepcopy(self.sim.data.qvel[:].squeeze())
         obs['gripper'] = self.get_endeff_pos()
-
         obs['state'] = np.concatenate([copy.deepcopy(self.sim.data.qpos[:].squeeze()),
                                        copy.deepcopy(self.sim.data.qvel[:].squeeze())])
         obs['object_qpos'] = copy.deepcopy(self.sim.data.qpos[9:].squeeze())
@@ -176,7 +187,6 @@ class Tabletop(BaseMujocoEnv, SawyerXYZEnv):
         #get images
         obs['images'] = self.render()
         obs['env_done'] = False
-
         return obs
   
     def valid_rollout(self):
@@ -191,12 +201,7 @@ class Tabletop(BaseMujocoEnv, SawyerXYZEnv):
     def has_goal(self):
         return True
 
-    def goal_reached(self):
-        dist = self.get_distance_score()
-        if dist < 0.08:
-          return 1
-        else:
-          return 0
+
    
 if __name__ == '__main__':
     env_params = {

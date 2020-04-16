@@ -44,7 +44,7 @@ policy = {
     'learned_cost': MonotonicityBaseTempDistClassifierTestTime,
     'learned_cost_model_path': os.environ['VMPC_EXP'] + '/classifier_control/distfunc_training/ensem_classifier/cartgripper_xz/monotonicity/weights/weights_ep199.pth',
     'verbose_every_iter': True,
-    "vidpred_model_path": os.environ['VMPC_EXP'] + '/classifier_control/vidpred_training/cartgripper_xz/docker_training/HDF5TrainableInterface_0_edf90eee_2019-11-22_04-38-28qp2v6u6q/checkpoint_65000',
+    "vidpred_model_path": os.environ['VMPC_EXP'] + '/classifier_control/vidpred_training/cartgripper_xz/docker_training/HDF5TrainableInterface_0_edf90eee_2019-11-22_04-38-28qp2v6u6q/checkpoint_150000',
 }
 
 config = {

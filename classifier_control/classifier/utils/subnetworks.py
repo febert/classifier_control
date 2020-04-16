@@ -34,6 +34,7 @@ class GetIntermediatesSequential(nn.Sequential):
                 skips.append(None)
         return input, skips[:-1]
 
+
 class ConvEncoder(nn.Module):
     def __init__(self, hp):
         super().__init__()
@@ -47,7 +48,6 @@ class ConvEncoder(nn.Module):
         else:
           input_c = hp.input_nc 
         
-
         print('l-1: indim {} outdim {}'.format(input_c, hp.ngf))
         self.net.add_module('input', ConvBlockEnc(in_dim=input_c, out_dim=hp.ngf, normalization=None,
                                                   builder=hp.builder))
@@ -66,11 +66,15 @@ class ConvEncoder(nn.Module):
 
     def get_output_size(self):
         # return (self._hp.nz_enc, self._hp.img_sz[0]//(2**self.n), self._hp.img_sz[1]//(2**self.n))
-        return (64, 5, 5)   # todo calc this, fix the padding in the convs!
+        if self._hp.img_sz == (64, 64):
+            return (self._hp.nz_enc, 5, 5)   # todo calc this, fix the padding in the convs!
+        elif self._hp.img_sz == (224, 224):
+            return (self._hp.nz_enc, 11, 11)
 
     def forward(self, input):
         return self.net(input)
-      
+
+
 class ConvDecoder(nn.Module):
     def __init__(self, hp):
         super().__init__()

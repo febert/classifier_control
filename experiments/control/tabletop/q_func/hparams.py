@@ -43,14 +43,14 @@ policy = {
     'learned_cost': QFunctionTestTime,
     'learned_cost_model_path': os.environ['VMPC_EXP'] + '/classifier_control/distfunc_training/q_function_training/tabletop-texture/terminal_gamma0.8/weights/weights_ep199.pth',
     'verbose_every_iter': True,
-    "vidpred_model_path": '/home/stian/ray_results/stian_training/HDF5TrainableInterface_00000_00000_0_2020-04-05_14-30-39fh8dp0s5/checkpoint_50000'
+    "vidpred_model_path": '/home/stian/ray_results/stian_training/HDF5TrainableInterface_00000_00000_0_2020-04-05_14-30-39fh8dp0s5/checkpoint_150000'
 }
 
 config = {
     'traj_per_file':1,  #28,
     'current_dir' : current_dir,
     'start_index':0,
-    'end_index': 1,
+    'end_index': 100,
     'agent': agent,
     'policy': policy,
     'save_data': False,

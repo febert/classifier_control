@@ -6,6 +6,7 @@ import numpy as np
 import cv2
 import pdb
 import torch
+import torch.nn.functional as F
 from classifier_control.classifier.utils.logger import TdistRegressorLogger
 from classifier_control.classifier.utils.general_utils import AttrDict
 import torch.nn as nn
@@ -50,9 +51,15 @@ class TempdistRegressor(BaseModel):
     def build_network(self, build_encoder=True):
         self.encoder = ConvEncoder(self._hp)
         out_size = self.encoder.get_output_size()
-        self.spatial_softmax = SpatialSoftmax(out_size[1], out_size[2], out_size[0])  # height, width, channel
-        self.linear = Linear(in_dim=out_size[0]*2, out_dim=1, builder=self._hp.builder)
-
+        if self._hp.spatial_softmax:
+            self.spatial_softmax = SpatialSoftmax(out_size[1], out_size[2], out_size[0])  # height, width, channel
+            self.linear = Linear(in_dim=out_size[0]*2, out_dim=1, builder=self._hp.builder)
+        else:
+            self.linear = Linear(in_dim=256, out_dim=1, builder=self._hp.builder)
+            self.linear2 = Linear(in_dim=out_size[0]*out_size[1]*out_size[2], out_dim=256, builder=self._hp.builder)
+            self.linear3 = Linear(in_dim=256, out_dim=256, builder=self._hp.builder)
+            self.linear4 = Linear(in_dim=256, out_dim=256, builder=self._hp.builder)
+            self.linear5 = Linear(in_dim=256, out_dim=256, builder=self._hp.builder)
 
     def sample_image_pair(self, images):
 
@@ -71,7 +78,7 @@ class TempdistRegressor(BaseModel):
         im_t0 = select_indices(images, t0)
         im_t1 = select_indices(images, t1)
 
-        self.labels = torch.clamp_max(t1 - t0, self._hp.tmax_label-1)
+        self.labels = torch.clamp_max(t1 - t0, self._hp.tmax_label-1).float()
 
         if self._hp.use_mixup:
             im_t0_prime = select_indices(images, t0_prime)
@@ -97,7 +104,15 @@ class TempdistRegressor(BaseModel):
     def make_prediction(self, image_pairs_stacked):
         im_t0, im_t1 = image_pairs_stacked[:,0], image_pairs_stacked[:,1]
         embeddings = self.encoder(torch.cat([im_t0, im_t1], dim=1))
-        embeddings = self.spatial_softmax(embeddings)
+        if self._hp.spatial_softmax:
+            embeddings = self.spatial_softmax(embeddings)
+        else:
+            embeddings = torch.flatten(embeddings, start_dim=1)
+            embeddings = F.relu(self.linear2(embeddings))
+            embeddings = F.relu(self.linear3(embeddings))
+            embeddings = F.relu(self.linear4(embeddings))
+            embeddings = F.relu(self.linear5(embeddings))
+
         self.tdist_estimates = self.linear(embeddings)
         model_output = AttrDict(tdist_estimates=self.tdist_estimates, img_pair=image_pairs_stacked)
         return model_output
@@ -105,7 +120,6 @@ class TempdistRegressor(BaseModel):
     def _log_outputs(self, model_output, inputs, losses, step, log_images, phase):
         if log_images:
             self._logger.log_pair_predictions(self.img_pair, self.tdist_estimates, self.labels,'tdist_regression', step, phase)
-
 
     def loss(self, model_output):
         losses = AttrDict()

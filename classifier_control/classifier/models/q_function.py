@@ -32,6 +32,7 @@ class QFunction(BaseModel):
             'low_dim':False,
             'gamma':0.0,
             'terminal': False,
+            'resnet': False,
         })
 
         # add new params to parent params
@@ -77,10 +78,11 @@ class QFunction(BaseModel):
                 image_pairs = torch.cat([inputs["current_state"], inputs['goal_state']], dim=1)
             else:
                 image_pairs = torch.cat([inputs["current_img"], inputs["goal_img"]], dim=1)
-            for ns in range(100):
-                actions = torch.FloatTensor(image_pairs.size(0), self._hp.action_size).uniform_(-1, 1).cuda()
-                targetq = self.target_qnetwork(image_pairs, actions)
-                qs.append(targetq)
+            with torch.no_grad():
+                for ns in range(100):
+                    actions = torch.FloatTensor(image_pairs.size(0), self._hp.action_size).uniform_(-1, 1).cuda()
+                    targetq = self.target_qnetwork(image_pairs, actions)
+                    qs.append(targetq)
             qs = torch.stack(qs)
             qval = torch.max(qs, 0)[0].squeeze()
             qval = qval.detach().cpu().numpy()
@@ -132,7 +134,6 @@ class QFunction(BaseModel):
 
         return self.pos_pair_cat, self.neg_pair_cat, pos_act, neg_act
 
-
     def loss(self, model_output):
         if self._hp.low_dim:
             image_pairs = self.images[:, self._hp.state_size:]
@@ -140,10 +141,11 @@ class QFunction(BaseModel):
             image_pairs = self.images[:, 3:]
             
         qs = []
-        for ns in range(100):
-            actions = torch.FloatTensor(model_output.size(0), self._hp.action_size).uniform_(-1, 1).cuda()
-            targetq = self.target_qnetwork(image_pairs, actions)
-            qs.append(targetq)
+        with torch.no_grad():
+            for ns in range(100):
+                actions = torch.FloatTensor(model_output.size(0), self._hp.action_size).uniform_(-1, 1).cuda()
+                targetq = self.target_qnetwork(image_pairs, actions)
+                qs.append(targetq)
         qs = torch.stack(qs)
         lb = self.labels.to(self._hp.device)
         
@@ -226,5 +228,5 @@ class QFunctionTestTime(QFunction):
     def forward(self, inputs):
         qvals = super().forward(inputs)
         # Compute the log to get the units to be in timesteps
-        timesteps = np.log(np.clip(qvals, 1e-5, 1)) / np.log(self._hp.gamma)
+        timesteps = np.log(np.clip(qvals, 1e-5, 1e1)) / np.log(self._hp.gamma)
         return timesteps + 1

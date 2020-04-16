@@ -42,7 +42,7 @@ policy = {
     'initial_std':  [0.6, 0.6, 0.3, 0.3],
     'learned_cost': ImageMseCost,
     'verbose_every_iter': True,
-    "vidpred_model_path": '/home/stian/ray_results/stian_training/HDF5TrainableInterface_00000_00000_0_2020-04-05_14-30-39fh8dp0s5/checkpoint_50000'
+    "vidpred_model_path": '/home/stian/ray_results/stian_training/HDF5TrainableInterface_00000_00000_0_2020-04-05_14-30-39fh8dp0s5/checkpoint_150000'
 }
 
 config = {

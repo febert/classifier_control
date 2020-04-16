@@ -43,7 +43,7 @@ policy = {
     'learned_cost': TesttimeMultiwayTempdistClassifier,
     'learned_cost_model_path': os.environ['VMPC_EXP'] + '/classifier_control/distfunc_training/tdist_multiway_classification/tabletop-texture/mixup/weights/weights_ep199.pth',
     'verbose_every_iter': True,
-    "vidpred_model_path": '/home/stian/ray_results/stian_training/HDF5TrainableInterface_00000_00000_0_2020-04-05_14-30-39fh8dp0s5/checkpoint_50000'
+    "vidpred_model_path": '/home/stian/ray_results/stian_training/HDF5TrainableInterface_00000_00000_0_2020-04-05_14-30-39fh8dp0s5/checkpoint_150000'
 }
 
 config = {

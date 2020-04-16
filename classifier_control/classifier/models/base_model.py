@@ -47,6 +47,7 @@ class BaseModel(nn.Module):
             'normalization': 'batch',
             'use_mixup': False,
             'mixup_alpha': 0.4,
+            'spatial_softmax': True
         })
 
         # add new params to parent params

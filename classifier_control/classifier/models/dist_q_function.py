@@ -10,6 +10,7 @@ from classifier_control.classifier.models.base_model import BaseModel
 from classifier_control.classifier.utils.q_network import DistQNetwork
 
 class DistQFunction(BaseModel):
+
     def __init__(self, overrideparams, logger=None):
         super().__init__(logger)
         self._hp = self._default_hparams()
@@ -32,8 +33,9 @@ class DistQFunction(BaseModel):
             'nz_enc': 64,
             'classifier_restore_path':None,  # not really needed here.,
             'low_dim':False,
-            'gamma':0.0
-            
+            'gamma':0.0,
+            'resnet': False,
+            'resnet_type': 'resnet50'
         })
 
         # add new params to parent params
@@ -76,15 +78,17 @@ class DistQFunction(BaseModel):
         else:
           qs = []
           image_pairs = torch.cat([inputs["current_img"], inputs["goal_img"]], dim=1)
-          for ns in range(100):
-              actions = torch.FloatTensor(image_pairs.size(0), self._hp.action_size).uniform_(-1, 1).cuda()
-              targetq = self.target_qnetwork(image_pairs, actions)
-              qs.append(targetq)
+
+          with torch.no_grad():
+              for ns in range(100):
+                  actions = torch.FloatTensor(image_pairs.size(0), self._hp.action_size).uniform_(-1, 1).cuda()
+                  targetq = self.target_qnetwork(image_pairs, actions)
+                  qs.append(targetq)
           qs = torch.stack(qs)
           qval = torch.max(qs, 0)[0].squeeze()
           qval = qval.detach().cpu().numpy()
           ## Compute Expectation
-          qval = np.sum((1 + np.arange(qval.shape[0])[None]) * qval)
+          qval = np.sum((1 + np.arange(qval.shape[1])[None]) * qval, axis=1)
         return qval
     
     def sample_image_triplet_actions(self, images, actions, tlen, tdist, states):
@@ -143,10 +147,12 @@ class DistQFunction(BaseModel):
             
         ## Get max_a Q (s_t+1) (Is a min since lower is better)
         qs = []
-        for ns in range(100):
-            actions = torch.FloatTensor(model_output.size(0), self._hp.action_size).uniform_(-1, 1).cuda()
-            targetq = self.target_qnetwork(image_pairs, actions)
-            qs.append(targetq)
+
+        with torch.no_grad():
+            for ns in range(100):
+                actions = torch.FloatTensor(model_output.size(0), self._hp.action_size).uniform_(-1, 1).cuda()
+                targetq = self.target_qnetwork(image_pairs, actions)
+                qs.append(targetq)
         qs = torch.stack(qs)
         qval = torch.sum((1 + torch.arange(qs.shape[2])[None]).float().to(self._hp.device) * qs, 2)
         ## Select corresponding target Q distribution
@@ -184,10 +190,7 @@ class DistQFunction(BaseModel):
     def get_device(self):
         return self._hp.device
     
-    
 
-
-    
 def select_indices(tensor, indices):
     new_images = []
     for b in range(tensor.shape[0]):
@@ -197,7 +200,7 @@ def select_indices(tensor, indices):
 
 class DistQFunctionTestTime(DistQFunction):
     def __init__(self, overrideparams, logger=None):
-        super(QFunctionTestTime, self).__init__(overrideparams, logger)
+        super(DistQFunctionTestTime, self).__init__(overrideparams, logger)
         checkpoint = torch.load(self._hp.classifier_restore_path, map_location=self._hp.device)
         self.load_state_dict(checkpoint['state_dict'])
 
