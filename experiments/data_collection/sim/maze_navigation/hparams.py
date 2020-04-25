@@ -37,9 +37,8 @@ config = {
     'traj_per_file':1,  #28,
     'current_dir' : current_dir,
     'start_index':0,
-    'end_index': 100,
+    'end_index': 10000,
     'agent': agent,
     'policy': policy,
-    #'save_format': ['hdf5', 'raw', 'tfrec'],
-    'save_format': ['raw']
+    'save_format': ['hdf5', 'raw', 'tfrec'],
 }
