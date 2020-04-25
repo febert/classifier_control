@@ -36,11 +36,9 @@ class BaseVideoDataset(data.Dataset):
         self.img_sz = mpar.img_sz
 
         if shuffle:
-            self.n_worker = 4
+            self.n_worker = 8
         else:
             self.n_worker = 1
-        #todo debug:
-        self.n_worker = 0
 
     def get_data_loader(self, batch_size):
         print('len {} dataset {}'.format(self.phase, len(self)))
@@ -123,15 +121,17 @@ class FixLenVideoDataset(BaseVideoDataset):
             key = 'traj{}'.format(ex_index)
 
             traj_ind = start_ind + ex_index
-            extra_obs = self.get_extra_obs(traj_ind)
 
-            # Fetch data into a dict
             data_dict = AttrDict(images=(F[key + '/images'].value))
+            # Fetch data into a dict
             for name in F[key].keys():
                 if name in ['states', 'actions', 'pad_mask']:
                     data_dict[name] = F[key + '/' + name].value.astype(np.float32)
-
-            data_dict['gripper'] = extra_obs['gripper'].astype(np.float32)
+            try:
+                extra_obs = self.get_extra_obs(traj_ind)
+                data_dict['gripper'] = extra_obs['gripper'].astype(np.float32)
+            except:
+                pass
 
         data_dict = self.process_data_dict(data_dict)
         if self._data_conf.sel_len != -1:

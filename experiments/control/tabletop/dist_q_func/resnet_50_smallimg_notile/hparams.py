@@ -41,7 +41,7 @@ policy = {
     'sampler': CorrelatedNoiseSampler,
     'initial_std':  [0.6, 0.6, 0.3, 0.3],
     'learned_cost': DistQFunctionTestTime,
-    'learned_cost_model_path': os.environ['VMPC_EXP'] + '/classifier_control/distfunc_training/dist_q_func_training/tabletop-texture/resnet-50-smallimg/weights/weights_ep195.pth',
+    'learned_cost_model_path': os.environ['VMPC_EXP'] + '/classifier_control/distfunc_training/dist_q_func_training/tabletop-texture/resnet-50-smallimg-notile/weights/weights_ep196.pth',
     'verbose_every_iter': True,
     'use_gt_model': True,
 }

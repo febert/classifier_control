@@ -23,7 +23,6 @@ class DistQFunction(BaseModel):
         self.tdist_classifiers = []
         self.build_network()
         self._use_pred_length = False
-        
 
     def _default_hparams(self):
         default_dict = AttrDict({
@@ -32,10 +31,13 @@ class DistQFunction(BaseModel):
             'action_size': 2,
             'nz_enc': 64,
             'classifier_restore_path':None,  # not really needed here.,
-            'low_dim':False,
-            'gamma':0.0,
+            'low_dim': False,
+            'gamma': 0.0,
+            'est_max_samples': 100,
             'resnet': False,
-            'resnet_type': 'resnet50'
+            'resnet_type': 'resnet50',
+            'tile_actions': True,
+            'sarsa': False,
         })
 
         # add new params to parent params
@@ -63,10 +65,10 @@ class DistQFunction(BaseModel):
           self.images = torch.cat([pos_pairs, neg_pairs], dim=0) 
           if self._hp.low_dim:
               image_0 = self.images[:, :2]
-              image_g =  self.images[:, 4:]
+              image_g = self.images[:, 4:]
           else:
               image_0 = self.images[:, :3]
-              image_g =  self.images[:, 6:]
+              image_g = self.images[:, 6:]
 
           image_pairs = torch.cat([image_0, image_g], dim=1)
           acts = torch.cat([pos_act, neg_act], dim=0)
@@ -78,17 +80,23 @@ class DistQFunction(BaseModel):
         else:
           qs = []
           image_pairs = torch.cat([inputs["current_img"], inputs["goal_img"]], dim=1)
+          if 'actions' in inputs:   # If actions are specified at test time, compute Q(s, a) instead of max_a Q(s, a)
+            qs = self.target_qnetwork(image_pairs, inputs['actions'])  # qs: [B, num_bins]
+            qval = torch.sum((1 + torch.arange(qs.shape[1])[None]).float().to(self._hp.device) * qs, 1)
+            return qval.detach().cpu().numpy()
 
           with torch.no_grad():
-              for ns in range(100):
+              for ns in range(self._hp.est_max_samples):
                   actions = torch.FloatTensor(image_pairs.size(0), self._hp.action_size).uniform_(-1, 1).cuda()
                   targetq = self.target_qnetwork(image_pairs, actions)
                   qs.append(targetq)
           qs = torch.stack(qs)
-          qval = torch.max(qs, 0)[0].squeeze()
-          qval = qval.detach().cpu().numpy()
+
           ## Compute Expectation
-          qval = np.sum((1 + np.arange(qval.shape[1])[None]) * qval, axis=1)
+          qval = torch.sum((1 + torch.arange(qs.shape[2])[None]).float().to(self._hp.device) * qs, 2)
+          ## Select corresponding target Q distribution
+          qval = qval.min(0)[0].squeeze()
+          qval = qval.detach().cpu().numpy()
         return qval
     
     def sample_image_triplet_actions(self, images, actions, tlen, tdist, states):
@@ -149,10 +157,15 @@ class DistQFunction(BaseModel):
         qs = []
 
         with torch.no_grad():
-            for ns in range(100):
-                actions = torch.FloatTensor(model_output.size(0), self._hp.action_size).uniform_(-1, 1).cuda()
-                targetq = self.target_qnetwork(image_pairs, actions)
+            if self._hp.sarsa:
+                targetq = self.target_qnetwork(image_pairs, self.acts)
                 qs.append(targetq)
+            else:
+                for ns in range(self._hp.est_max_samples):
+                    actions = torch.FloatTensor(model_output.size(0), self._hp.action_size).uniform_(-1, 1).cuda()
+                    targetq = self.target_qnetwork(image_pairs, actions)
+                    qs.append(targetq)
+
         qs = torch.stack(qs)
         qval = torch.sum((1 + torch.arange(qs.shape[2])[None]).float().to(self._hp.device) * qs, 2)
         ## Select corresponding target Q distribution
@@ -197,6 +210,7 @@ def select_indices(tensor, indices):
         new_images.append(tensor[b, indices[b]])
     tensor = torch.stack(new_images, dim=0)
     return tensor
+
 
 class DistQFunctionTestTime(DistQFunction):
     def __init__(self, overrideparams, logger=None):

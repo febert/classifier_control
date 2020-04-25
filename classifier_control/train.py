@@ -212,6 +212,7 @@ class ModelTrainer(BaseTrainer):
             'data_conf': None,   # model parameters
             'exp_path': None,  # Path to the folder with experiments
             'num_epochs': 200,
+            'log_every': 5,
             'epoch_cycles_train': 1,
             'mujoco_xml': None,
             'optimizer': 'adam',    # supported: 'adam', 'rmsprop', 'sgd'
@@ -229,7 +230,7 @@ class ModelTrainer(BaseTrainer):
         for epoch in range(start_epoch, self._hp.num_epochs):
             if epoch > start_epoch:
                 self.val(not (epoch - start_epoch) % 3)
-            if epoch % 5 == 0:
+            if epoch % self._hp.log_every == 0:
                 save_checkpoint({
                     'epoch': epoch,
                     'global_step': self.global_step,

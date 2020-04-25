@@ -41,7 +41,7 @@ policy = {
     'selection_frac': 0.05,
     'sampler': CorrelatedNoiseSampler,
     'initial_std': [0.05, 0.05],
-    'learned_cost':QFunctionTestTime,
+    'learned_cost': QFunctionTestTime,
     'learned_cost_model_path': os.environ['VMPC_EXP'] + '/classifier_control/distfunc_training/q_function_training/cartgripper_xz/gamma0.2/weights/weights_ep199.pth',
     'verbose_every_iter': True,
     "vidpred_model_path": os.environ['VMPC_EXP'] + '/classifier_control/vidpred_training/cartgripper_xz/docker_training/HDF5TrainableInterface_0_edf90eee_2019-11-22_04-38-28qp2v6u6q/checkpoint_65000',

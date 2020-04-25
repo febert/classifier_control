@@ -16,8 +16,8 @@ class MujocoPredictor:
         self._input_hparams = {
             'img_size': (64, 64),
         }
-        self.env_params['viewer_image_height'] = 48
-        self.env_params['viewer_image_width'] = 64
+        self.env_params['viewer_image_height'] = 192
+        self.env_params['viewer_image_width'] = 256
 
     def __call__(self, context, actions_dict):
         """
@@ -49,7 +49,7 @@ class MujocoPredictor:
                 obs = sim_env.step(action)
                 obs_im = obs['images']
                 state = obs['state']
-                resized = (cv2.resize(obs_im.squeeze(), self._input_hparams['img_size'], interpolation=cv2.INTER_CUBIC)/255.)[None]
+                resized = (cv2.resize(obs_im.squeeze(), self._input_hparams['img_size'], interpolation=cv2.INTER_AREA)/255.)[None]
                 batch_ims.append(resized)
                 batch_states.append(state)
             predicted_frames.append(np.stack(batch_ims))
