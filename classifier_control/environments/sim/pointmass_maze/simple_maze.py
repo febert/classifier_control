@@ -9,7 +9,7 @@ from visual_mpc.utils.im_utils import npy_to_mp4
 
 class SimpleMaze(BaseMujocoEnv):
   """Simple Maze Navigation Env"""
-  def __init__(self, env_params_dict, reset_state = None):
+  def __init__(self, env_params_dict, reset_state=None):
     params_dict = copy.deepcopy(env_params_dict)
     _hp = self._default_hparams()
     for name, value in params_dict.items():
@@ -22,7 +22,7 @@ class SimpleMaze(BaseMujocoEnv):
     self._adim = 2
     self.difficulty = _hp.difficulty
     self._hp = _hp
-    
+
   def default_ncam():
     return 1
 
@@ -34,30 +34,34 @@ class SimpleMaze(BaseMujocoEnv):
     return parent_params
   
   def reset(self, reset_state=None):
-    if self.difficulty is None:
-      self.sim.data.qpos[0] = np.random.uniform(-0.27, 0.27)
-    elif self.difficulty == 'e':
-      self.sim.data.qpos[0] = np.random.uniform(0.15, 0.27)
-    elif self.difficulty == 'm':
-      self.sim.data.qpos[0] = np.random.uniform(-0.15, 0.15)
-    elif self.difficulty == 'h':
-      self.sim.data.qpos[0] = np.random.uniform(-0.27, -0.15)
-    self.sim.data.qpos[1] = np.random.uniform(-0.27, 0.27)
-    
-    self.goal = np.zeros((2,))
-    self.goal[0] = np.random.uniform(-0.27, 0.27)
-    self.goal[1] = np.random.uniform(-0.27, 0.27)
+    if reset_state is not None:
+      self.sim.data.qpos[:] = reset_state
+      self.sim.step()
+    else:
+      if self.difficulty is None:
+        self.sim.data.qpos[0] = np.random.uniform(-0.27, 0.27)
+      elif self.difficulty == 'e':
+        self.sim.data.qpos[0] = np.random.uniform(0.15, 0.27)
+      elif self.difficulty == 'm':
+        self.sim.data.qpos[0] = np.random.uniform(-0.15, 0.15)
+      elif self.difficulty == 'h':
+        self.sim.data.qpos[0] = np.random.uniform(-0.27, -0.15)
+      self.sim.data.qpos[1] = np.random.uniform(-0.27, 0.27)
 
-    # Randomize wal positions
-    w1 = np.random.uniform(-0.2, 0.2)
-    w2 = np.random.uniform(-0.2, 0.2)
-#     print(self.sim.model.geom_pos[:])
-#     print(self.sim.model.geom_pos[:].shape)
-    self.sim.model.geom_pos[5, 1] = 0.25 + w1
-    self.sim.model.geom_pos[7, 1] = -0.25 + w1
-    self.sim.model.geom_pos[6, 1] = 0.25 + w2
-    self.sim.model.geom_pos[8, 1] = -0.25 + w2
-    return self._get_obs(), None
+      self.goal = np.zeros((2,))
+      self.goal[0] = np.random.uniform(-0.27, 0.27)
+      self.goal[1] = np.random.uniform(-0.27, 0.27)
+
+      # Randomize wal positions
+      w1 = np.random.uniform(-0.2, 0.2)
+      w2 = np.random.uniform(-0.2, 0.2)
+  #     print(self.sim.model.geom_pos[:])
+  #     print(self.sim.model.geom_pos[:].shape)
+      self.sim.model.geom_pos[5, 1] = 0.25 + w1
+      self.sim.model.geom_pos[7, 1] = -0.25 + w1
+      self.sim.model.geom_pos[6, 1] = 0.25 + w2
+      self.sim.model.geom_pos[8, 1] = -0.25 + w2
+    return self._get_obs(), self.sim.data.qpos.flat.copy()
 
   def step(self, action):
     self.sim.data.qvel[:] = 0
@@ -95,7 +99,10 @@ class SimpleMaze(BaseMujocoEnv):
 
   def current_obs(self):
     return self._get_obs(finger_force)
-  
+
+  def set_goal(self, obj_pose, arm_pose):
+    self.goal = arm_pose[:]
+
   def get_goal(self):
     curr_qpos = self.sim.data.qpos[:].copy()
     self.sim.data.qpos[:] = self.goal
