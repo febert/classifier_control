@@ -40,5 +40,5 @@ config = {
     'end_index': 10000,
     'agent': agent,
     'policy': policy,
-    'save_format': ['hdf5', 'raw', 'tfrec'],
+    #'save_format': ['hdf5', 'raw'],
 }

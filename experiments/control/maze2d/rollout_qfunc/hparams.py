@@ -29,7 +29,7 @@ agent = {
     'T': 50,
     'gen_xml': (True, 20),  # whether to generate xml, and how often
     # 'make_final_gif_freq':1,
-    'start_goal_confs': os.environ['VMPC_DATA'] + '/classifier_control/data_collection/sim/maze_navigation_startgoal/raw',
+    'start_goal_confs': os.environ['VMPC_DATA'] + 'classifier_control/data_collection/sim/maze_navigation/raw',
     'num_load_steps':51,
 #     'ncam':1
 }
@@ -37,7 +37,7 @@ agent = {
 
 policy = {
     'type': QFunctionController,
-    'learned_cost_model_path': os.environ['VMPC_EXP'] + '/classifier_control/distfunc_training/dist_q_func_training/maze2d/weights/weights_ep50.pth',
+    'learned_cost_model_path': os.environ['VMPC_EXP'] + 'classifier_control/distfunc_training/dist_q_func_training/maze2d/weights/weights_ep50.pth',
     'verbose_every_iter': True,
 }
 

@@ -90,9 +90,8 @@ class QFunctionController(Policy):
             parent_params.add_hparam(k, default_dict[k])
         return parent_params
 
-    def get_best_action(self):
-
-        resampled_imgs = resample_imgs(self._images, self.img_sz)
+    def get_best_action(self, t=None):
+        resampled_imgs = resample_imgs(self._images, self.img_sz) / 255.
         input_images = ten2pytrch(resampled_imgs, self.device)[-1]
         input_images = input_images[None].repeat(self._hp.num_samples, 1, 1, 1)
         actions, scores = [], []
@@ -105,6 +104,11 @@ class QFunctionController(Policy):
             scores.append(self.learned_cost.predict(inp_dict))
         scores = np.concatenate(scores)
         actions = np.concatenate(actions)
+#         import matplotlib.pyplot as plt
+#         for ind in range(len(actions)):
+#             plt.scatter(actions[ind, 0], actions[ind, 1], c="red", alpha=scores[ind] / 10.0 )
+#         plt.savefig(f'ims/action_dist{t}.png')
+#         plt.close()
         best_act = actions[np.argmin(scores)]
         return best_act
 
@@ -117,10 +121,11 @@ class QFunctionController(Policy):
           self._goal_image = goal_image[0]
         else:
           self._goal_image = goal_image[-1, 0]  # pick the last time step as the goal image
+        
 
-        #import matplotlib.pyplot as plt
-        #plt.imsave(f'test{t}.png', self._goal_image)
-        return {'actions': self.get_best_action()}
+#         import matplotlib.pyplot as plt
+#         plt.imsave(f'ims/goal{t}.png', self._goal_image)
+        return {'actions': self.get_best_action(t)}
 
 
 def ten2pytrch(img, device):
