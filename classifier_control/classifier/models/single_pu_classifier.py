@@ -101,7 +101,7 @@ class SinglePUClassifier(BaseModel):
         logits_ = model_output.logits[:, 0]
         positive_logits, ul_logits = logits_[:self._hp.batch_size], logits_[self._hp.batch_size:]
         positive_loss = self.pos_prior * self.sigmoid_loss(positive_logits, 1)
-        negative_loss = self.sigmoid_loss(ul_logits, -1) - self.pos_prior * self.sigmoid_loss(positive_logits, 1)
+        negative_loss = self.sigmoid_loss(ul_logits, -1) - self.pos_prior * self.sigmoid_loss(positive_logits, -1)
 
         if negative_loss >= -self._hp.beta:
             total_loss = positive_loss + negative_loss
