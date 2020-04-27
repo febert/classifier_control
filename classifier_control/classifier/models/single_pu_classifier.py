@@ -46,13 +46,13 @@ class SinglePUClassifier(BaseModel):
 
         #import pdb; pdb.set_trace()
         tlen = inputs.demo_seq_images.shape[1]
-        pos_pairs, neg_pairs = self.sample_image_pair(inputs.demo_seq_images, tlen, self.tdist)
-        image_pairs = torch.cat([pos_pairs, neg_pairs], dim=0)
+        pos_pairs, ul_pairs = self.sample_image_pair(inputs.demo_seq_images, tlen, self.tdist)
+        image_pairs = torch.cat([pos_pairs, ul_pairs], dim=0)
         embeddings = self.encoder(image_pairs)
         embeddings = self.spatial_softmax(embeddings)
         logits = self.linear(embeddings)
         self.out_sigmoid = torch.sigmoid(logits)
-        model_output = AttrDict(logits=logits, out_sigmoid=self.out_sigmoid, pos_pair=self.pos_pair, neg_pair=self.neg_pair)
+        model_output = AttrDict(logits=logits, out_sigmoid=self.out_sigmoid, pos_pair=self.pos_pair, ul_pair=self.unlabeled_pair)
         return model_output
 
     def sample_image_pair(self, images, tlen, tdist):
@@ -89,6 +89,8 @@ class SinglePUClassifier(BaseModel):
         self.unlabeled_pair = torch.stack([im_t0, im_t1], dim=1)
         unlabeled_pair_cat = torch.cat([im_t0, im_t1], dim=1)
 
+        self.labels = torch.cat([torch.ones(self._hp.batch_size), torch.zeros(self._hp.batch_size)]) # No real meaning
+
         return pos_pair_cat, unlabeled_pair_cat
 
     def sigmoid_loss(self, logits, labels):
@@ -97,9 +99,9 @@ class SinglePUClassifier(BaseModel):
     def loss(self, model_output):
         losses = AttrDict()
         logits_ = model_output.logits[:, 0]
-        positive_logits, ul_logits = logits_[:self._hp.batch_size] = logits_[self._hp.batch_size:]
-        positive_loss = self._hp.pos_prior * self.sigmoid_loss(positive_logits, 1)
-        negative_loss = self.sigmoid_loss(ul_logits, -1) - self._hp.pos_prior * self.sigmoid_loss(positive_logits, 1)
+        positive_logits, ul_logits = logits_[:self._hp.batch_size], logits_[self._hp.batch_size:]
+        positive_loss = self.pos_prior * self.sigmoid_loss(positive_logits, 1)
+        negative_loss = self.sigmoid_loss(ul_logits, -1) - self.pos_prior * self.sigmoid_loss(positive_logits, 1)
 
         if negative_loss >= -self._hp.beta:
             total_loss = positive_loss + negative_loss
@@ -108,7 +110,7 @@ class SinglePUClassifier(BaseModel):
 
         setattr(losses, 'positive_loss', positive_loss)
         setattr(losses, 'negative_loss', negative_loss)
-        setattr(losses, 'negative_loss', total_loss)
+        setattr(losses, 'total_loss', total_loss)
         return losses
 
     def _log_outputs(self, model_output, inputs, losses, step, log_images, phase):
@@ -129,7 +131,7 @@ class SinglePUClassifier(BaseModel):
         self._logger.log_scalar(false_negative_rate, 'tdist{}_false_negative_rate'.format(self.tdist), step, phase)
 
         if log_images:
-            self._logger.log_single_tdist_classifier_image(self.pos_pair, self.neg_pair, self.out_sigmoid,
+            self._logger.log_single_tdist_classifier_image(self.pos_pair, self.unlabeled_pair, self.out_sigmoid,
                                                           'tdist{}'.format(self.tdist), step, phase)
 
 def select_indices(tensor, indices):
