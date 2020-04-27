@@ -1,0 +1,130 @@
+import numpy as np
+import pdb
+import torch
+from visual_mpc.policy.cem_controllers.visualizer.construct_html import save_imgs_direct
+from classifier_control.classifier.utils.general_utils import AttrDict
+import torch.nn as nn
+from classifier_control.classifier.models.base_model import BaseModel
+from classifier_control.classifier.models.base_tempdistclassifier import BaseTempDistClassifier
+from classifier_control.classifier.models.single_pu_classifier import SinglePUClassifier, TesttimeSinglePUClassifier
+from classifier_control.classifier.utils.vis_utils import visualize_barplot_array
+import os
+import yaml
+import cv2
+
+
+class PUClassifier(BaseTempDistClassifier):
+    def __init__(self, overrideparams, logger=None):
+        super().__init__(overrideparams, logger)
+
+    def _default_hparams(self):
+        default_dict = AttrDict({
+            'pos_priors': [0.5]*10,
+            'beta': 0
+        })
+
+        # add new params to parent params
+        parent_params = super()._default_hparams()
+        for k in default_dict.keys():
+            parent_params.add_hparam(k, default_dict[k])
+        return parent_params
+
+    @property
+    def singletempdistclassifier(self):
+        return SinglePUClassifier
+
+    def loss(self, model_output):
+        losses = AttrDict()
+        total_losses = []
+        for i_cl, cl in enumerate(self.tdist_classifiers):
+            ind_loss_dict = cl.loss(model_output[i_cl])
+            for key, val in ind_loss_dict.items():
+                setattr(losses, f'tdist{cl.tdist}_{key}', val)
+            total_losses.append(ind_loss_dict.total_loss)
+        # compute total loss
+        losses.total_loss = torch.stack(total_losses).sum()
+        return losses
+
+
+class PUClassifierTestTime(PUClassifier):
+    def __init__(self, overrideparams, logger=None):
+        super(PUClassifierTestTime, self).__init__(overrideparams, logger)
+        if self._hp.classifier_restore_path is not None:
+            checkpoint = torch.load(self._hp.classifier_restore_path, map_location=self._hp.device)
+            self.load_state_dict(checkpoint['state_dict'])
+        else:
+            print('#########################')
+            print("Warning Classifier weights not restored during init!!")
+            print('#########################')
+
+    def _default_hparams(self):
+        parent_params = super()._default_hparams()
+        parent_params.add_hparam('classifier_restore_path', None)
+        return parent_params
+
+    def forward(self, inputs):
+        outputs = super().forward(inputs)
+        sigmoid = []
+        for i in range(self._hp.ndist_max):
+            sigmoid.append(outputs[i].out_sigmoid.data.cpu().numpy().squeeze())
+        self.sigmoids = np.stack(sigmoid, axis=1)
+        tail_probs = 1 - self.sigmoids
+        expected_dist = 1 + np.sum(tail_probs, axis=1)
+        return expected_dist
+
+    @property
+    def singletempdistclassifier(self):
+        return TesttimeSinglePUClassifier
+
+    def visualize_test_time(self, content_dict, visualize_indices, verbose_folder):
+        # save classifier preds
+        sel_sigmoids = self.sigmoids[visualize_indices]
+        sigmoid_images = visualize_barplot_array(sel_sigmoids)
+        row_name = 'sigmoid_images'
+        content_dict[row_name] = save_imgs_direct(verbose_folder,
+                                                  row_name, sigmoid_images)
+
+        # sel_softmax_dists = self.softmax_differences[visualize_indices]
+        # sigmoid_images = visualize_barplot_array(sel_softmax_dists)
+        # row_name = 'softmax_of_differences'
+        # content_dict[row_name] = save_imgs_direct(verbose_folder,
+        #                                           row_name, sigmoid_images)
+
+    def vis_dist_over_traj(self, inputs, step):
+        images = inputs.demo_seq_images
+
+        cols = []
+        n_ex = 10
+        
+        for t in range(images.shape[1]):
+            outputs = self.forward({'current_img': images[:,t], 'goal_img': images[:, -1]})
+
+            sigmoid = []
+            for i in range(len(outputs)):
+                sigmoid.append(outputs[i].out_sigmoid.data.cpu().numpy().squeeze())
+            sigmoids = np.stack(sigmoid, axis=1)
+
+            sig_img_t = visualize_barplot_array(sigmoids[:n_ex])
+
+            img_column_t = []
+            images_npy = images.data.cpu().numpy().squeeze()
+            for b in range(n_ex):
+                img_column_t.append(ptrch2uint8(images_npy[b, t]))
+                img_column_t.append(np.transpose(sig_img_t[b], [2,0,1]))
+            img_column_t = np.concatenate(img_column_t, axis=1)
+            cols.append(img_column_t)
+
+        image = np.concatenate(cols, axis=2)
+        # cv2.imwrite('/nfs/kun1/users/febert/data/vmpc_exp/dist_over_traj.png', np.transpose(image, [1,2,0]))
+        self._logger.log_image(image, 'dist_over_traj', step, phase='test')
+        self._logger.log_video(np.stack(cols, axis=0), 'dist_over_traj_gif', step, phase='test')
+
+        print('logged dist over traj')
+
+def softmax(array, axis=0):
+    exp = np.exp(array)
+    exp = exp/(np.sum(exp, axis=axis)[:, None] + 1e-5)
+    return exp
+
+def ptrch2uint8(img):
+    return ((img + 1)/2*255.).astype(np.uint8)
