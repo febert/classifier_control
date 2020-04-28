@@ -102,7 +102,7 @@ class DistQFunction(BaseModel):
     def sample_image_triplet_actions(self, images, actions, tlen, tdist, states):
         
         # get positives:
-        t0 = np.random.randint(0, tlen - tdist - 1, self._hp.batch_size)
+        t0 = np.random.randint(0, tlen - tdist - 2, self._hp.batch_size)
         t1 = t0 + 1
         tg = t0 + 1 + np.random.randint(0, tdist, self._hp.batch_size)
         t0, t1,  tg = torch.from_numpy(t0), torch.from_numpy(t1), torch.from_numpy(tg)
@@ -114,6 +114,7 @@ class DistQFunction(BaseModel):
         s_t1 = select_indices(states, t1)
         s_tg = select_indices(states, tg)
         pos_act = select_indices(actions, t0)
+        pos_act_t1 = select_indices(actions, t1)
 
         self.pos_pair = torch.stack([im_t0, im_tg], dim=1)
         if self._hp.low_dim:
@@ -135,6 +136,7 @@ class DistQFunction(BaseModel):
         s_t1 = select_indices(states, t1)
         s_tg = select_indices(states, tg)
         neg_act = select_indices(actions, t0)
+        neg_act_t1 = select_indices(actions, t1)
         self.neg_pair = torch.stack([im_t0, im_tg], dim=1)
         if self._hp.low_dim:
             self.neg_pair_cat = torch.cat([s_t0, s_t1, s_tg], dim=1)
@@ -143,9 +145,9 @@ class DistQFunction(BaseModel):
 
         # one means within range of tdist range,  zero means outside of tdist range
         self.labels = torch.cat([torch.ones(self._hp.batch_size), torch.zeros(self._hp.batch_size)])
+        self.acts_t1 = torch.cat([pos_act_t1, neg_act_t1], dim=0)
 
         return self.pos_pair_cat, self.neg_pair_cat, pos_act, neg_act
-
 
     def loss(self, model_output):
         if self._hp.low_dim:
@@ -158,7 +160,7 @@ class DistQFunction(BaseModel):
 
         with torch.no_grad():
             if self._hp.sarsa:
-                targetq = self.target_qnetwork(image_pairs, self.acts)
+                targetq = self.target_qnetwork(image_pairs, self.acts_t1)
                 qs.append(targetq)
             else:
                 for ns in range(self._hp.est_max_samples):
