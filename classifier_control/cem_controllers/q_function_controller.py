@@ -94,26 +94,32 @@ class QFunctionController(Policy):
         resampled_imgs = resample_imgs(self._images, self.img_sz) / 255.
         input_images = ten2pytrch(resampled_imgs, self.device)[-1]
         input_images = input_images[None].repeat(self._hp.num_samples, 1, 1, 1)
+        input_states = torch.from_numpy(self._states)[None].float().to(self.device).repeat(self._hp.num_samples, 1)
+        goal_img = torch.from_numpy(self._goal_image)[None].float().to(self.device).repeat(self._hp.num_samples, 1)
+        #goal_img = uint2pytorch(resample_imgs(self._goal_image, self.img_sz), self._hp.num_samples, self.device)
         actions, scores = [], []
         for i in range(self._hp.action_sample_batches):
             action_batch = torch.FloatTensor(input_images.size(0), 2).uniform_(-1, 1).cuda()
             inp_dict = {'current_img': input_images,
-                        'goal_img': uint2pytorch(resample_imgs(self._goal_image, self.img_sz), self._hp.num_samples, self.device),
+                        'current_state': input_states,
+                        'goal_img': goal_img,
                         'actions': action_batch}
             actions.append(action_batch.cpu().numpy())
             scores.append(self.learned_cost.predict(inp_dict))
         scores = np.concatenate(scores)
         actions = np.concatenate(actions)
-#         import matplotlib.pyplot as plt
-#         for ind in range(len(actions)):
-#             plt.scatter(actions[ind, 0], actions[ind, 1], c="red", alpha=scores[ind] / 10.0 )
-#         plt.savefig(f'ims/action_dist{t}.png')
-#         plt.close()
+        #import matplotlib.pyplot as plt
+        #for ind in range(len(actions)):
+        #    plt.scatter(actions[ind, 0], actions[ind, 1], c="red", alpha=scores[ind] / 10.0 )
+        #plt.savefig(f'ims/action_dist{t}.png')
+        #plt.close()
         best_act = actions[np.argmin(scores)]
         return best_act
 
     def act(self, t=None, i_tr=None, images=None, goal_image=None, verbose_worker=None, state=None):
         self._images = images
+        self._states = state[-1][:2]
+        #print(f'state {t}: {self._states}')
         self._verbose_worker = verbose_worker
 
         ### Support for getting goal images from environment
@@ -121,10 +127,12 @@ class QFunctionController(Policy):
           self._goal_image = goal_image[0]
         else:
           self._goal_image = goal_image[-1, 0]  # pick the last time step as the goal image
-        
-
-#         import matplotlib.pyplot as plt
-#         plt.imsave(f'ims/goal{t}.png', self._goal_image)
+        #print(f'goal {t}: {self._goal_image}')
+        #import matplotlib.pyplot as plt
+        #plt.imsave(f'ims/goal{t}.png', self._goal_image)
+        #plt.imsave(f'ims/image{t}.png', self._images[-1][0])
+        #self.get_best_action(t)
+        #return {'actions': np.array([0.2, 0.2])}
         return {'actions': self.get_best_action(t)}
 
 

@@ -9,6 +9,10 @@ from visual_mpc.utils.im_utils import npy_to_mp4
 
 class SimpleMaze(BaseMujocoEnv):
   """Simple Maze Navigation Env"""
+
+  fixed_w1 = -0.1
+  fixed_w2 = 0.1
+
   def __init__(self, env_params_dict, reset_state=None):
     params_dict = copy.deepcopy(env_params_dict)
     _hp = self._default_hparams()
@@ -27,7 +31,7 @@ class SimpleMaze(BaseMujocoEnv):
     return 1
 
   def _default_hparams(self):
-    default_dict = {'verbose':False, 'difficulty': None}
+    default_dict = {'verbose':False, 'difficulty': None, 'fix_walls': False}
     parent_params = super()._default_hparams()
     for k in default_dict.keys():
       parent_params.add_hparam(k, default_dict[k])
@@ -35,10 +39,12 @@ class SimpleMaze(BaseMujocoEnv):
   
   def reset(self, reset_state=None):
     self.t = 0
-    if reset_state is not None:
-      self.sim.data.qpos[:] = reset_state
-      self.sim.data.qvel[:]= 0
-      self.sim.step()
+    #if reset_state is not None:
+    #  self.sim.data.qpos[:] = reset_state
+    #  self.sim.data.qvel[:]= 0
+    #  self.sim.step()
+    if False:
+      pass
     else:
       if self.difficulty is None:
         self.sim.data.qpos[0] = np.random.uniform(-0.27, 0.27)
@@ -55,8 +61,11 @@ class SimpleMaze(BaseMujocoEnv):
       self.goal[1] = np.random.uniform(-0.27, 0.27)
 
       # Randomize wal positions
-      w1 = np.random.uniform(-0.2, 0.2)
-      w2 = np.random.uniform(-0.2, 0.2)
+      if self._hp.fix_walls:
+        w1, w2 = self.fixed_w1, self.fixed_w2
+      else:
+        w1 = np.random.uniform(-0.2, 0.2)
+        w2 = np.random.uniform(-0.2, 0.2)
   #     print(self.sim.model.geom_pos[:])
   #     print(self.sim.model.geom_pos[:].shape)
       self.sim.model.geom_pos[5, 1] = 0.25 + w1
@@ -106,9 +115,11 @@ class SimpleMaze(BaseMujocoEnv):
     return self._get_obs(finger_force)
 
   def set_goal(self, obj_pose, arm_pose):
+    return
     self.goal = arm_pose[:]
 
   def get_goal(self):
+    return self.goal[None]
     curr_qpos = self.sim.data.qpos[:].copy()
     self.sim.data.qpos[:] = self.goal
     self.sim.step()

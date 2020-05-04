@@ -79,7 +79,12 @@ class DistQFunction(BaseModel):
           qval = torch.sum((1 + torch.arange(self.out_softmax.shape[1])[None]).float().to(self._hp.device) * self.out_softmax, 1)
         else:
           qs = []
-          image_pairs = torch.cat([inputs["current_img"], inputs["goal_img"]], dim=1)
+
+          if self._hp.low_dim:
+            image_pairs = torch.cat([inputs["current_state"], inputs["goal_img"]], dim=1)
+          else:
+            image_pairs = torch.cat([inputs["current_img"], inputs["goal_img"]], dim=1)
+
           if 'actions' in inputs:   # If actions are specified at test time, compute Q(s, a) instead of max_a Q(s, a)
             qs = self.target_qnetwork(image_pairs, inputs['actions'])  # qs: [B, num_bins]
             qval = torch.sum((1 + torch.arange(qs.shape[1])[None]).float().to(self._hp.device) * qs, 1)
