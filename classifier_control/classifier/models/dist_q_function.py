@@ -182,7 +182,7 @@ class DistQFunction(BaseModel):
                     actions = torch.FloatTensor(model_output.size(0), self._hp.action_size).uniform_(-1, 1).cuda()
                     targetq = self.target_qnetwork(image_pairs, actions)
                     qs.append(targetq)
-
+                    total_actions.append(actions)
         qs = torch.stack(qs)
         total_actions = torch.stack(total_actions)
         qval = torch.sum((1 + torch.arange(qs.shape[2])[None]).float().to(self._hp.device) * qs, 2)
