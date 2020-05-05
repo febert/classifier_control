@@ -23,6 +23,7 @@ class DistQFunction(BaseModel):
         self.tdist_classifiers = []
         self.build_network()
         self._use_pred_length = False
+        self.target_network_counter = 0
 
     def _default_hparams(self):
         default_dict = AttrDict({
@@ -38,6 +39,8 @@ class DistQFunction(BaseModel):
             'resnet_type': 'resnet50',
             'tile_actions': True,
             'sarsa': False,
+            'update_target_rate': 1,
+            'double_q': False,
         })
 
         # add new params to parent params
@@ -162,11 +165,18 @@ class DistQFunction(BaseModel):
             
         ## Get max_a Q (s_t+1) (Is a min since lower is better)
         qs = []
+        total_actions = []
 
         with torch.no_grad():
             if self._hp.sarsa:
                 targetq = self.target_qnetwork(image_pairs, self.acts_t1)
                 qs.append(targetq)
+            elif self._hp.double_q:
+                for ns in range(self._hp.est_max_samples):
+                    actions = torch.FloatTensor(model_output.size(0), self._hp.action_size).uniform_(-1, 1).cuda()
+                    targetq = self.qnetwork(image_pairs, actions).detach() # argmax using current Q value
+                    qs.append(targetq)
+                    total_actions.append(actions)
             else:
                 for ns in range(self._hp.est_max_samples):
                     actions = torch.FloatTensor(model_output.size(0), self._hp.action_size).uniform_(-1, 1).cuda()
@@ -174,18 +184,20 @@ class DistQFunction(BaseModel):
                     qs.append(targetq)
 
         qs = torch.stack(qs)
+        total_actions = torch.stack(total_actions)
         qval = torch.sum((1 + torch.arange(qs.shape[2])[None]).float().to(self._hp.device) * qs, 2)
         ## Select corresponding target Q distribution
         ids = qval.min(0)[1]
-        newqs = []
-        for k in range(self._hp.batch_size*2):
-          newqs.append(qs[ids[k], k])
-        qs = torch.stack(newqs)
+        best_actions = torch.stack([total_actions[ids[k], k] for k in range(self._hp.batch_size*2)])
+        qs = self.target_qnetwork(image_pairs, best_actions).detach()
+        #for k in range(self._hp.batch_size*2):
+        #  newqs.append(qs[ids[k], k])
+        #qs = torch.stack(newqs)
         
         ## Shift Q*(s_t+1) to get Q*(s_t)
         shifted = torch.zeros(qs.size()).to(self._hp.device)
         shifted[:, 1:] = qs[:, :-1]
-        shifted[:,-1] += qs[:, -1]
+        shifted[:, -1] += qs[:, -1]
         lb = self.labels.to(self._hp.device).unsqueeze(-1)
         isg = torch.zeros((self._hp.batch_size * 2, 10)).to(self._hp.device)
         isg[:,0] = 1
@@ -198,8 +210,12 @@ class DistQFunction(BaseModel):
         log_q = self.out_softmax.clamp(1e-5, 1-1e-5).log()
         log_t = target.clamp(1e-5, 1-1e-5).log()
         losses.total_loss = (target * (log_t - log_q)).sum(1).mean()
-        
-        self.target_qnetwork.load_state_dict(self.qnetwork.state_dict())
+
+        self.target_network_counter = self.target_network_counter + 1
+        if self.target_network_counter % self._hp.update_target_rate == 0:
+            self.target_qnetwork.load_state_dict(self.qnetwork.state_dict())
+            self.target_network_counter = 0
+
         return losses
     
     def _log_outputs(self, model_output, inputs, losses, step, log_images, phase):

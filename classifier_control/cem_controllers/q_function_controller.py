@@ -7,6 +7,7 @@ from collections import OrderedDict
 from classifier_control.classifier.utils.DistFuncEvaluation import DistFuncEvaluation
 from classifier_control.classifier.models.base_tempdistclassifier import BaseTempDistClassifierTestTime
 from classifier_control.classifier.models.dist_q_function import DistQFunctionTestTime
+from classifier_control.classifier.models.q_function import QFunctionTestTime
 
 from robonet.video_prediction.testing import VPredEvaluation
 import torch
@@ -50,7 +51,10 @@ class QFunctionController(Policy):
         learned_cost_testparams['batch_size'] = self._hp.num_samples
         learned_cost_testparams['data_conf'] = {'img_sz': self.img_sz}  #todo currently uses 64x64!!
         learned_cost_testparams['classifier_restore_path'] = self._hp.learned_cost_model_path
-        self.learned_cost = DistFuncEvaluation(DistQFunctionTestTime, learned_cost_testparams)
+        if self._hp.dist_q:
+            self.learned_cost = DistFuncEvaluation(DistQFunctionTestTime, learned_cost_testparams)
+        else:
+            self.learned_cost = DistFuncEvaluation(QFunctionTestTime, learned_cost_testparams)
         self.device = self.learned_cost.model.get_device()
 
         self._img_height, self._img_width = [ag_params['image_height'], ag_params['image_width']]
@@ -83,6 +87,7 @@ class QFunctionController(Policy):
             'num_samples': 200,
             'learned_cost_model_path': None,
             'verbose_every_iter': False,
+            'dist_q': True,
         }
         parent_params = super(QFunctionController, self)._default_hparams()
 
@@ -108,18 +113,18 @@ class QFunctionController(Policy):
             scores.append(self.learned_cost.predict(inp_dict))
         scores = np.concatenate(scores)
         actions = np.concatenate(actions)
-        #import matplotlib.pyplot as plt
-        #for ind in range(len(actions)):
-        #    plt.scatter(actions[ind, 0], actions[ind, 1], c="red", alpha=scores[ind] / 10.0 )
-        #plt.savefig(f'ims/action_dist{t}.png')
-        #plt.close()
+        import matplotlib.pyplot as plt
+        for ind in range(len(actions)):
+            plt.scatter(actions[ind, 0], actions[ind, 1], c="red", alpha=max(0, scores[ind]/10.0))
+        plt.savefig(f'ims/action_dist{t}.png')
+        plt.close()
         best_act = actions[np.argmin(scores)]
         return best_act
 
     def act(self, t=None, i_tr=None, images=None, goal_image=None, verbose_worker=None, state=None):
         self._images = images
         self._states = state[-1][:2]
-        #print(f'state {t}: {self._states}')
+        print(f'state {t}: {self._states}')
         self._verbose_worker = verbose_worker
 
         ### Support for getting goal images from environment
@@ -127,10 +132,10 @@ class QFunctionController(Policy):
           self._goal_image = goal_image[0]
         else:
           self._goal_image = goal_image[-1, 0]  # pick the last time step as the goal image
-        #print(f'goal {t}: {self._goal_image}')
-        #import matplotlib.pyplot as plt
+        print(f'goal {t}: {self._goal_image}')
+        import matplotlib.pyplot as plt
         #plt.imsave(f'ims/goal{t}.png', self._goal_image)
-        #plt.imsave(f'ims/image{t}.png', self._images[-1][0])
+        plt.imsave(f'ims/image{t}.png', self._images[-1][0])
         #self.get_best_action(t)
         #return {'actions': np.array([0.2, 0.2])}
         return {'actions': self.get_best_action(t)}

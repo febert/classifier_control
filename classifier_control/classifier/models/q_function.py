@@ -31,7 +31,7 @@ class QFunction(BaseModel):
             'classifier_restore_path':None,  # not really needed here.,
             'low_dim':False,
             'gamma':0.0,
-            'terminal': False,
+            'terminal': True,
             'resnet': False,
         })
 
@@ -75,9 +75,14 @@ class QFunction(BaseModel):
         else:
             qs = []
             if self._hp.low_dim:
-                image_pairs = torch.cat([inputs["current_state"], inputs['goal_state']], dim=1)
+                image_pairs = torch.cat([inputs["current_state"], inputs['goal_img']], dim=1)
             else:
                 image_pairs = torch.cat([inputs["current_img"], inputs["goal_img"]], dim=1)
+
+            if 'actions' in inputs:
+                qs = self.target_qnetwork(image_pairs, inputs['actions'])
+                return qs.detach().cpu().numpy()
+
             with torch.no_grad():
                 for ns in range(100):
                     actions = torch.FloatTensor(image_pairs.size(0), self._hp.action_size).uniform_(-1, 1).cuda()
@@ -89,7 +94,9 @@ class QFunction(BaseModel):
         return qval
     
     def sample_image_triplet_actions(self, images, actions, tlen, tdist, states):
-        
+
+        states = states[:, :, :self._hp.state_size]
+
         # get positives:
         t0 = np.random.randint(0, tlen - tdist - 1, self._hp.batch_size)
         t1 = t0 + 1
