@@ -97,7 +97,7 @@ class Tabletop(BaseMujocoEnv, SawyerXYZEnv):
         _id = self.model.site_names.index(siteName)
         return self.data.site_xpos[_id].copy()
 
-    def reset(self, reset_state=None, flag = True):
+    def reset(self, reset_state=None, flag = False):
         self._reset_hand()
 
         if flag:
