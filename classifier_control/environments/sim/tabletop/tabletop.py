@@ -127,16 +127,18 @@ class Tabletop(BaseMujocoEnv, SawyerXYZEnv):
         #self.curr_path_length = 0
         self._obs_history = []
         o = self._get_obs()
+        full_obs = np.concatenate((o['state'], o['gripper']))
         self._reset_eval()
 
         #Can try changing this
-        return o, self.sim.data.qpos.flat.copy()
+        return full_obs
 
     def step(self, action):
         self.set_xyz_action(action[:3])
         self.do_simulation([action[-1], -action[-1]])
         obs = self._get_obs()
-        return obs, self.dist(), None
+        full_obs = np.concatenate((obs['state'], obs['gripper']))
+        return full_obs, self.dist(), False, None
   
     def render(self):
         return super().render().copy()
