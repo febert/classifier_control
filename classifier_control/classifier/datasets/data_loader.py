@@ -33,7 +33,8 @@ class BaseVideoDataset(data.Dataset):
         self.data_conf = data_conf
 
         self.shuffle = shuffle and phase == 'train'
-        self.img_sz = mpar.img_sz
+        if mpar is not None:
+            self.img_sz = mpar.img_sz
 
         if shuffle:
             self.n_worker = 8

@@ -20,7 +20,6 @@ tensorflow
 mujoco_py==1.50.1.56
 requests==2.20.0
 h5py==2.9.0
-torch==1.1.0.post2
+torch
 torchvision==0.2.1
 tensorboardX==1.2.0
-pyquaternion

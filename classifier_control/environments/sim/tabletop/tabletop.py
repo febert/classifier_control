@@ -9,10 +9,9 @@ from gym.spaces import  Dict , Box
 from visual_mpc.utils.im_utils import npy_to_mp4
 from metaworld.envs.mujoco.sawyer_xyz.base import SawyerXYZEnv
 
-
 class Tabletop(BaseMujocoEnv, SawyerXYZEnv):
     """Tabletop Manip (Metaworld) Env"""
-    def __init__(self, env_params_dict, reset_state=None):
+    def __init__(self, env_params_dict, reset_state=None, x = 5, y = 5, z = 0):
         hand_low=(-0.2, 0.4, 0.0)
         hand_high=(0.2, 0.8, 0.05)
         obj_low=(-0.3, 0.4, 0.1)
@@ -46,6 +45,7 @@ class Tabletop(BaseMujocoEnv, SawyerXYZEnv):
         self.liftThresh = 0.04
         self.max_path_length = 100
         self.hand_init_pos = np.array((0, 0.6, 0.0))
+        self.set_goal_pos(x,y,z)
 
     def default_ncam():
         return 1
@@ -97,10 +97,14 @@ class Tabletop(BaseMujocoEnv, SawyerXYZEnv):
         _id = self.model.site_names.index(siteName)
         return self.data.site_xpos[_id].copy()
 
-    def reset(self, reset_state=None):
+    def reset(self, reset_state=None, flag = True):
         self._reset_hand()
 
-        if reset_state is not None:
+        if flag:
+            target_qpos = reset_state[:reset_state.shape[0]//2]
+            target_qvel = reset_state[reset_state.shape[0]//2:]
+            self.set_state(target_qpos, target_qvel)
+        elif reset_state is not None:
             target_qpos = reset_state
             target_qvel = np.zeros_like(self.data.qvel)
             self.set_state(target_qpos, target_qvel)
@@ -132,7 +136,7 @@ class Tabletop(BaseMujocoEnv, SawyerXYZEnv):
         self.set_xyz_action(action[:3])
         self.do_simulation([action[-1], -action[-1]])
         obs = self._get_obs()
-        return obs
+        return obs, self.dist(), None
   
     def render(self):
         return super().render().copy()
@@ -154,6 +158,15 @@ class Tabletop(BaseMujocoEnv, SawyerXYZEnv):
         arm_dist_despos = np.linalg.norm(self._goal_arm_pose - self.sim.data.qpos[:2])
         print(f'Distance score is {mean_obj_dist}')
         return mean_obj_dist
+
+    def set_goal_pos(self, x,y,z):
+        self.x = x
+        self.y = y
+        self.z = z
+
+    def dist(self):
+        x,y,z = self._get_obs()['gripper']
+        return -((x-self.x)**2 +(y-self.y)**2 + (z-self.z)**2)**0.5
 
     def has_goal(self):
         return True
