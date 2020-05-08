@@ -16,7 +16,7 @@ class DistFuncEvaluation():
             overrideparams.pop('builder')
             overrideparams.update(testparams)
             overrideparams['ignore_same_as_default'] = ''  # adding this flag prevents error because of value being equal to default
-            self.model = testmodel(overrideparams)
+            self.model = testmodel(overrideparams).eval()
             self.model.to(torch.device('cuda'))
 
     def predict(self, inputs):
