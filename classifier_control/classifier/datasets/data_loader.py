@@ -63,6 +63,7 @@ class FixLenVideoDataset(BaseVideoDataset):
         :param dataset_size:
         """
         super().__init__(data_dir, mpar, data_conf, phase, shuffle)
+        self.n_worker = 8
 
         self.filenames = self._maybe_post_split(self._get_filenames())
         random.seed(1)
