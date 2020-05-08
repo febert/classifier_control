@@ -21,6 +21,11 @@ class QNetwork(torch.nn.Module):
         if self._hp.low_dim:
             self.linear1 = Linear(in_dim=2*self._hp.state_size, out_dim=128, builder=self._hp.builder)
             self.linear2 = Linear(in_dim=128 + self._hp.action_size, out_dim=128, builder=self._hp.builder)
+            if self._hp.film:
+                self.film1 = Linear(in_dim=self._hp.action_size, out_dim=128, builder=self._hp.builder)
+                self.film2 = Linear(in_dim=128, out_dim=128, builder=self._hp.builder)
+                self.film3 = Linear(in_dim=128, out_dim=128, builder=self._hp.builder)
+                self.film4 = Linear(in_dim=128, out_dim=256, builder=self._hp.builder)
         else:
             self.encoder = ConvEncoder(self._hp)
             out_size = self.encoder.get_output_size()
@@ -44,9 +49,16 @@ class QNetwork(torch.nn.Module):
             embeddings = self.encoder(image_pairs).view(image_pairs.size(0), -1)
 
         e = F.relu(self.linear1(embeddings))
-        e = torch.cat([e, actions], dim=1)
-
-        e = F.relu(self.linear2(e))
+        if self._hp.film:
+            film = F.relu(self.film1(actions))
+            film = F.relu(self.film2(film))
+            film = F.relu(self.film3(film))
+            film = self.film4(film)
+            action_gamma, action_beta = film[:, :128], film[:, 128:]
+            e = e * action_gamma + action_beta
+        else:
+            e = torch.cat([e, actions], dim=1)
+            e = F.relu(self.linear2(e))
         e = F.relu(self.linear3(e))
         e = F.relu(self.linear4(e))
         e = F.relu(self.linear5(e))

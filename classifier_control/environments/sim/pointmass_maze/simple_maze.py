@@ -119,7 +119,8 @@ class SimpleMaze(BaseMujocoEnv):
     self.goal = arm_pose[:]
 
   def get_goal(self):
-    return self.goal[None]
+    #return self.goal[None]
+    print(self.goal)
     curr_qpos = self.sim.data.qpos[:].copy()
     self.sim.data.qpos[:] = self.goal
     self.sim.step()

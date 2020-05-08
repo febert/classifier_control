@@ -33,6 +33,8 @@ class QFunction(BaseModel):
             'gamma':0.0,
             'terminal': True,
             'resnet': False,
+            'random_relabel': False,
+            'film': False,
         })
 
         # add new params to parent params
@@ -71,7 +73,13 @@ class QFunction(BaseModel):
             acts = torch.cat([pos_act, neg_act], dim=0)
             self.acts = acts
 
+            import ipdb; ipdb.set_trace()
+            #rnd_actions = torch.FloatTensor(self._hp.action_size).uniform_(-1, 1).cuda()[None].repeat(image_pairs.shape[0], 1)
+            rnd_actions = acts[0].repeat(image_pairs.shape[0], 1)
+            rnd_image_pairs = image_pairs[0].repeat(image_pairs.shape[0], 1)
+            print(self.qnetwork(rnd_image_pairs, rnd_actions))
             qval = self.qnetwork(image_pairs, acts)
+            print(qval)
         else:
             qs = []
             if self._hp.low_dim:
@@ -80,13 +88,13 @@ class QFunction(BaseModel):
                 image_pairs = torch.cat([inputs["current_img"], inputs["goal_img"]], dim=1)
 
             if 'actions' in inputs:
-                qs = self.target_qnetwork(image_pairs, inputs['actions'])
+                qs = self.qnetwork(image_pairs, inputs['actions'])
                 return qs.detach().cpu().numpy()
 
             with torch.no_grad():
                 for ns in range(100):
                     actions = torch.FloatTensor(image_pairs.size(0), self._hp.action_size).uniform_(-1, 1).cuda()
-                    targetq = self.target_qnetwork(image_pairs, actions)
+                    targetq = self.target_qnetwork(image_pairs, actions).detach()
                     qs.append(targetq)
             qs = torch.stack(qs)
             qval = torch.max(qs, 0)[0].squeeze()
@@ -125,10 +133,16 @@ class QFunction(BaseModel):
 
         im_t0 = select_indices(images, t0)
         im_t1 = select_indices(images, t1)
-        im_tg = select_indices(images, tg)
+        if self._hp.random_relabel:
+            im_tg = select_indices(images, tg, batch_offset=1)
+        else:
+            im_tg = select_indices(images, tg)
         s_t0 = select_indices(states, t0)
         s_t1 = select_indices(states, t1)
-        s_tg = select_indices(states, tg)
+        if self._hp.random_relabel:
+            s_tg = select_indices(states, tg, batch_offset=1)
+        else:
+            s_tg = select_indices(states, tg)
         neg_act = select_indices(actions, t0)
         self.neg_pair = torch.stack([im_t0, im_tg], dim=1)
         if self._hp.low_dim:
@@ -137,6 +151,8 @@ class QFunction(BaseModel):
             self.neg_pair_cat = torch.cat([im_t0, im_t1, im_tg], dim=1)
 
         # one means within range of tdist range,  zero means outside of tdist range
+        #neg_labels = torch.where(torch.norm(s_t1-s_tg, dim=1) < 0.05, torch.ones(self._hp.batch_size).cuda(), torch.zeros(self._hp.batch_size).cuda()).cuda()
+        #self.labels = torch.cat([torch.ones(self._hp.batch_size).cuda(), neg_labels])
         self.labels = torch.cat([torch.ones(self._hp.batch_size), torch.zeros(self._hp.batch_size)])
 
         return self.pos_pair_cat, self.neg_pair_cat, pos_act, neg_act
@@ -151,7 +167,7 @@ class QFunction(BaseModel):
         with torch.no_grad():
             for ns in range(100):
                 actions = torch.FloatTensor(model_output.size(0), self._hp.action_size).uniform_(-1, 1).cuda()
-                targetq = self.target_qnetwork(image_pairs, actions)
+                targetq = self.target_qnetwork(image_pairs, actions).detach()
                 qs.append(targetq)
         qs = torch.stack(qs)
         lb = self.labels.to(self._hp.device)
@@ -205,10 +221,10 @@ class QFunction(BaseModel):
         return self._hp.device
     
 
-def select_indices(tensor, indices):
+def select_indices(tensor, indices, batch_offset=0):
     new_images = []
     for b in range(tensor.shape[0]):
-        new_images.append(tensor[b, indices[b]])
+        new_images.append(tensor[(b+batch_offset) % tensor.shape[0], indices[b]])
     tensor = torch.stack(new_images, dim=0)
     return tensor
 
@@ -219,6 +235,7 @@ class QFunctionTestTime(QFunction):
         if self._hp.classifier_restore_path is not None:
             checkpoint = torch.load(self._hp.classifier_restore_path, map_location=self._hp.device)
             self.load_state_dict(checkpoint['state_dict'])
+            self.target_qnetwork.load_state_dict(self.qnetwork.state_dict())
         else:
             print('#########################')
             print("Warning Q function weights not restored during init!!")
@@ -235,5 +252,5 @@ class QFunctionTestTime(QFunction):
     def forward(self, inputs):
         qvals = super().forward(inputs)
         # Compute the log to get the units to be in timesteps
-        timesteps = np.log(np.clip(qvals, 1e-5, 1e1)) / np.log(self._hp.gamma)
+        timesteps = np.log(np.clip(qvals, 1e-5, 1)) / np.log(self._hp.gamma)
         return timesteps + 1

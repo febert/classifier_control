@@ -177,9 +177,6 @@ class LatentDynamics(BaseModel):
         return self._hp.device
     
     
-
-
-    
 def select_indices(tensor, indices):
     new_images = []
     for b in range(tensor.shape[0]):

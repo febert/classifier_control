@@ -41,6 +41,7 @@ class DistQFunction(BaseModel):
             'sarsa': False,
             'update_target_rate': 1,
             'double_q': False,
+            'action_range': [-1.0, 1.0]
         })
 
         # add new params to parent params
@@ -95,7 +96,7 @@ class DistQFunction(BaseModel):
 
           with torch.no_grad():
               for ns in range(self._hp.est_max_samples):
-                  actions = torch.FloatTensor(image_pairs.size(0), self._hp.action_size).uniform_(-1, 1).cuda()
+                  actions = torch.FloatTensor(image_pairs.size(0), self._hp.action_size).uniform_(*self._hp.action_range).cuda()
                   targetq = self.target_qnetwork(image_pairs, actions)
                   qs.append(targetq)
           qs = torch.stack(qs)
@@ -162,7 +163,6 @@ class DistQFunction(BaseModel):
             image_pairs = self.images[:, 2:]
         else:
             image_pairs = self.images[:, 3:]
-            
         ## Get max_a Q (s_t+1) (Is a min since lower is better)
         qs = []
         total_actions = []
@@ -173,13 +173,13 @@ class DistQFunction(BaseModel):
                 qs.append(targetq)
             elif self._hp.double_q:
                 for ns in range(self._hp.est_max_samples):
-                    actions = torch.FloatTensor(model_output.size(0), self._hp.action_size).uniform_(-1, 1).cuda()
+                    actions = torch.FloatTensor(model_output.size(0), self._hp.action_size).uniform_(*self._hp.action_range).cuda()
                     targetq = self.qnetwork(image_pairs, actions).detach() # argmax using current Q value
                     qs.append(targetq)
                     total_actions.append(actions)
             else:
                 for ns in range(self._hp.est_max_samples):
-                    actions = torch.FloatTensor(model_output.size(0), self._hp.action_size).uniform_(-1, 1).cuda()
+                    actions = torch.FloatTensor(model_output.size(0), self._hp.action_size).uniform_(*self._hp.action_range).cuda()
                     targetq = self.target_qnetwork(image_pairs, actions)
                     qs.append(targetq)
                     total_actions.append(actions)
@@ -210,6 +210,9 @@ class DistQFunction(BaseModel):
         log_q = self.out_softmax.clamp(1e-5, 1-1e-5).log()
         log_t = target.clamp(1e-5, 1-1e-5).log()
         losses.total_loss = (target * (log_t - log_q)).sum(1).mean()
+        batched_loss = (target * (log_t - log_q)).sum(1)
+        # Reduce [2*B] to [B]
+        losses.per_traj_loss = batched_loss[:self._hp.batch_size] + batched_loss[self._hp.batch_size:]
 
         self.target_network_counter = self.target_network_counter + 1
         if self.target_network_counter % self._hp.update_target_rate == 0:

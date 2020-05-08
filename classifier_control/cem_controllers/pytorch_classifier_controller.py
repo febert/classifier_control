@@ -176,10 +176,10 @@ class LearnedCostController(CEMBaseController):
 
     def _weight_scores(self, raw_scores):
         scores = raw_scores.copy()
-        # if self.last_plan:
-        #     last_step = ((self.agentparams['T'] - self._hp.start_planning) % self.predictor.horizon) - 1
-        #     for i in range(last_step, scores.shape[1]):
-        #         scores[:, i] = scores[:, last_step]
+        if self.last_plan:
+            last_step = ((self.agentparams['T'] - self._hp.start_planning) % self.predictor.horizon) - 1
+            for i in range(last_step, scores.shape[1]):
+                scores[:, i] = scores[:, last_step]
 
         if self._hp.finalweight >= 0:
             scores[:, -1] *= self._hp.finalweight
@@ -192,10 +192,10 @@ class LearnedCostController(CEMBaseController):
     def act(self, t=None, i_tr=None, images=None, goal_image=None, verbose_worker=None, state=None):
         self._images = images
         self._verbose_worker = verbose_worker
-        # if self.agentparams['T'] - t < self.predictor.horizon:
-        #     self.last_plan = True
-        # else:
-        #     self.last_plan = False
+        if self.agentparams['T'] - t < self.predictor.horizon:
+            self.last_plan = True
+        else:
+            self.last_plan = False
         ### Support for getting goal images from environment
         if goal_image.shape[0] == 1:
           self._goal_image = goal_image[0]

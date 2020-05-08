@@ -36,14 +36,15 @@ policy = {
     'type': LearnedCostController,
     'replan_interval': 13,
     'nactions': 13,
-    # 'num_samples': 200,
-    'selection_frac': 0.05,
+    'num_samples': 600,
+    'selection_frac': 0.03,
     'sampler': CorrelatedNoiseSampler,
     'initial_std':  [0.6, 0.6, 0.3, 0.3],
     'learned_cost': DistQFunctionTestTime,
     'learned_cost_model_path': os.environ['VMPC_EXP'] + '/classifier_control/distfunc_training/dist_q_func_training/tabletop-texture/large_cap/weights/weights_ep199.pth',
     'verbose_every_iter': True,
     'use_gt_model': True,
+    'finalweight': 1000,
 }
 
 config = {

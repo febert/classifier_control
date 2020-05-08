@@ -137,6 +137,8 @@ class FixLenVideoDataset(BaseVideoDataset):
         if self._data_conf.sel_len != -1:
             data_dict = self.sample_rand_shifts(data_dict)
 
+        data_dict['index'] = index
+
         return data_dict
 
     def process_data_dict(self, data_dict):

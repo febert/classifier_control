@@ -40,6 +40,7 @@ policy = {
     'type': QFunctionController,
     'learned_cost_model_path': os.environ['VMPC_EXP'] + '/classifier_control/distfunc_training/dist_q_func_training/maze2d/lowdim-fixed-walls/weights/weights_ep190.pth',
     'verbose_every_iter': True,
+    'num_samples': 41 * 41
 }
 
 config = {
