@@ -200,7 +200,7 @@ class Tabletop(BaseMujocoEnv, SawyerXYZEnv):
         self._obs_history.append(copy.deepcopy(obs))
 
         #get images
-        obs['images'] = self.render()
+        # obs['images'] = self.render()
         obs['env_done'] = False
         return obs
   
