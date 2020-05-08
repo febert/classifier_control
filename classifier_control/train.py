@@ -219,6 +219,9 @@ class ModelTrainer(BaseTrainer):
             'lr': 1e-3,
             'momentum': 0,      # momentum in RMSProp / SGD optimizer
             'adam_beta': 0.9,       # beta1 param in Adam
+            'upweight_losses': False,
+            'upweight_losses_frac': 0.2,
+            'upweight_scale': 5,
         }
         # add new params to parent params
         parent_params = HParams()
@@ -227,6 +230,8 @@ class ModelTrainer(BaseTrainer):
         return parent_params
     
     def train(self, start_epoch):
+        self.traj_weights = np.ones(self.train_loader.dataset)
+
         for epoch in range(start_epoch, self._hp.num_epochs):
             if epoch > start_epoch:
                 self.val(not (epoch - start_epoch) % 3)
@@ -260,6 +265,7 @@ class ModelTrainer(BaseTrainer):
         self.log_images_interval = int(epoch_len / self.args.imepoch)
 
         print('starting epoch ', epoch)
+        epoch_per_traj_losses = torch.zeros(len(self.train_loader_dataset), dtype=torch.float32)
 
         for self.batch_idx, sample_batched in enumerate(self.train_loader):
             data_load_time.update(time.time() - end)
@@ -268,6 +274,13 @@ class ModelTrainer(BaseTrainer):
             self.optimizer.zero_grad()
             output = self.model(inputs)
             losses = self.model.loss(output)
+            # Save losses for each trajectory on this epoch to decide how to upweight losses in the future
+            epoch_per_traj_losses[sample_batched['index']] = losses.per_traj_loss.detach().cpu().numpy()
+
+            if self._hp.upweight_losses:
+                multipliers = self.traj_weights[sample_batched['index']].detach()
+                losses.total_loss = (losses.per_traj_loss() * multipliers).mean()
+
             losses.total_loss.backward()
             self.optimizer.step()
             
@@ -294,6 +307,13 @@ class ModelTrainer(BaseTrainer):
             
             del output, losses
             self.global_step = self.global_step + 1
+
+        # Compute upweight losses for next epoch
+        largest_inds = torch.topk(epoch_per_traj_losses, int(self._hp.upweight_losses_frac * len(self.train_loader.dataset)), dim=0)
+
+        self.traj_weights = np.ones(len(self.train_loader.dataset))
+        self.traj_weights[largest_inds] *= self._hp.upweight_scale
+
         self.model.to(torch.device('cpu'))
 
     def val(self, test_control=True):
