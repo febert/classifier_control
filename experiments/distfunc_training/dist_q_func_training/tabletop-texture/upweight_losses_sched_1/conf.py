@@ -14,6 +14,8 @@ configuration = {
     'data_dir': os.environ['VMPC_DATA'] + '/classifier_control/data_collection/sim/tabletop-texture',       # 'directory containing data.' ,
     'batch_size' : 32,
 #     'num_epochs': 200,
+    'upweight_losses': True,
+    #'upweight_schedule': 1,
 }
 
 configuration = AttrDict(configuration)
@@ -27,5 +29,5 @@ model_config = {
 #     'low_dim':True,
     'gamma':0.8,
     'action_size': 4,
-    'upweight_losses': True,
+
 }
