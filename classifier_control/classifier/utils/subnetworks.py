@@ -5,7 +5,7 @@ import torch.nn.functional as F
 
 from torch import Tensor
 
-from classifier_control.classifier.utils.layers import ConvBlockEnc, ConvBlockDec
+from classifier_control.classifier.utils.layers import ConvBlockEnc, ConvBlockDec, Linear
 
 
 def init_weights_xavier(m):
@@ -16,6 +16,20 @@ def init_weights_xavier(m):
     if isinstance(m, nn.Conv2d):
         pass    # by default PyTorch uses Kaiming_Normal initializer
 
+class SequentialWithConditional(nn.Sequential):
+    def __init__(self):
+        super().__init__()
+
+    def forward(self, inp_dict):
+        """Computes forward pass through the network outputting all intermediate activations with final output."""
+        action = inp_dict['act']
+        input = inp_dict['input']
+        for i, module in enumerate(self._modules.values()):
+            if isinstance(module, FiLM):
+                input = module(input, action)
+            else:
+                input = module(input)
+        return input
 
 class GetIntermediatesSequential(nn.Sequential):
     def __init__(self, stride):
@@ -35,14 +49,36 @@ class GetIntermediatesSequential(nn.Sequential):
         return input, skips[:-1]
 
 
+class FiLM(nn.Module):
+    def __init__(self, hp, inp_dim, feature_size):
+        super().__init__()
+        self._hp = hp
+
+        self.inp_dim = inp_dim
+        self.feature_size = feature_size
+        self.linear = Linear(in_dim=inp_dim, out_dim=2*feature_size, builder=self._hp.builder)
+
+    def forward(self, feats, inp):
+        gb = self.linear(inp)
+        gamma, beta = gb[:, :self.feature_size], gb[:, self.feature_size:]
+        gamma = gamma.view(feats.size(0), feats.size(1), 1, 1)
+        beta = beta.view(feats.size(0), feats.size(1), 1, 1)
+        return feats * gamma + beta
+
+
 class ConvEncoder(nn.Module):
     def __init__(self, hp):
         super().__init__()
         self._hp = hp
 
         self.n = hp.builder.get_num_layers(hp.img_sz) - 1
-        self.net = GetIntermediatesSequential(hp.skips_stride) if hp.use_skips else nn.Sequential()
-        
+        if self._hp.use_skips:
+            self.net = GetIntermediatesSequential(hp.skips_stride)
+        elif self._hp.film:
+            self.net = SequentialWithConditional()
+        else:
+            self.net = nn.Sequential()
+
         if hp.goal_cond:
           input_c = hp.input_nc * 2
         else:
@@ -51,12 +87,17 @@ class ConvEncoder(nn.Module):
         print('l-1: indim {} outdim {}'.format(input_c, hp.ngf))
         self.net.add_module('input', ConvBlockEnc(in_dim=input_c, out_dim=hp.ngf, normalization=None,
                                                   builder=hp.builder))
+        if self._hp.film:
+            self.net.add_module('input_film', FiLM(hp, hp.action_size, hp.ngf))
+
         for i in range(self.n - 3):
             filters_in = hp.ngf * 2 ** i
             self.net.add_module('pyramid-{}'.format(i),
                                 ConvBlockEnc(in_dim=filters_in, out_dim=filters_in * 2, normalize=hp.builder.normalize,
                                              builder=hp.builder))
             print('l{}: indim {} outdim {}'.format(i, filters_in, filters_in*2))
+            if self._hp.film:
+                self.net.add_module('film-{}'.format(i), FiLM(hp, hp.action_size, filters_in * 2))
 
         # add output layer
         self.net.add_module('head', nn.Conv2d(hp.ngf * 2 ** (self.n - 3), hp.nz_enc, 4))

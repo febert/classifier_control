@@ -129,8 +129,7 @@ class LearnedCostController(CEMBaseController):
         for tpred in range(gen_images.shape[1]):
             input_images = ten2pytrch(gen_images[:, tpred], self.device)
             inp_dict = {'current_img': input_images,
-                        'goal_img': uint2pytorch(resample_imgs(self._goal_image, self.img_sz), self._hp.num_samples, self.device)}
-
+                        'goal_img': uint2pytorch(resample_imgs(self._goal_image, self.img_sz), gen_images.shape[0], self.device)}
             print('peform prediction for ', tpred)
             scores.append(self.learned_cost.predict(inp_dict))
 
@@ -142,7 +141,7 @@ class LearnedCostController(CEMBaseController):
             verbose_folder = self.traj_log_dir + "/planning_{}_itr_{}".format(self._t, cem_itr)
 
             content_dict = OrderedDict()
-            visualize_indices = scores.argsort()[:10]
+            visualize_indices = scores.argsort()[:20]
 
             # start images
             for c in range(self._n_cam):
@@ -156,7 +155,8 @@ class LearnedCostController(CEMBaseController):
 
             # render predicted images
             for c in range(self._n_cam):
-                verbose_images = [(gen_images[g_i, :, c]*255).astype(np.uint8) for g_i in visualize_indices]
+                verbose_images = [(gen_images[g_i, :]*255).astype(np.uint8) for g_i in visualize_indices]
+                verbose_images = [resample_imgs(traj, self._goal_image.shape).squeeze() for traj in verbose_images]
                 row_name = 'cam_{}_pred_images'.format(c)
                 content_dict[row_name] = save_gifs_direct(verbose_folder,
                                                        row_name, verbose_images)
@@ -189,19 +189,22 @@ class LearnedCostController(CEMBaseController):
         return scores
 
 
-    def act(self, t=None, i_tr=None, images=None, goal_image=None, verbose_worker=None, state=None):
+    def act(self, t=None, i_tr=None, images=None, goal_image=None, verbose_worker=None, state=None, policy_out=None):
         self._images = images
         self._verbose_worker = verbose_worker
         if self.agentparams['T'] - t < self.predictor.horizon:
             self.last_plan = True
         else:
             self.last_plan = False
+
+        ### TEMP: CHEATING
+        self._oracle_actions = np.concatenate([[x['actions'] for x in policy_out], [np.zeros(4)]*20], axis=0)
+
         ### Support for getting goal images from environment
         if goal_image.shape[0] == 1:
           self._goal_image = goal_image[0]
         else:
           self._goal_image = goal_image[-1, 0]  # pick the last time step as the goal image
-
         return super(LearnedCostController, self).act(t, i_tr, state)
 
 

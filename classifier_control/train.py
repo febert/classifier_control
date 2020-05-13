@@ -329,13 +329,13 @@ class ModelTrainer(BaseTrainer):
                 self.model_test.load_state_dict(self.model.state_dict())
             losses_meter = RecursiveAverageMeter()
             with autograd.no_grad():
-
                 preds = []
                 idx_dists = []
                 gripper_dists = []
                 obj_dists = []
                 robot_joint_dists = []
                 mse_dists = []
+                print(len(self.train_loader))
 
                 for batch_idx, sample_batched in enumerate(self.val_loader):
                     inputs = AttrDict(map_dict(lambda x: x.to(self.device), sample_batched))

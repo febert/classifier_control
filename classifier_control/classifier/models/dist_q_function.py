@@ -41,8 +41,10 @@ class DistQFunction(BaseModel):
             'sarsa': False,
             'update_target_rate': 1,
             'double_q': False,
-            'action_range': [-1.0, 1.0]
+            'action_range': [-1.0, 1.0],
+            'film': False,
         })
+
 
         # add new params to parent params
         parent_params = super()._default_hparams()
@@ -212,7 +214,7 @@ class DistQFunction(BaseModel):
         losses.total_loss = (target * (log_t - log_q)).sum(1).mean()
         batched_loss = (target * (log_t - log_q)).sum(1)
         # Reduce [2*B] to [B]
-        losses.per_traj_loss = (batched_loss[:self._hp.batch_size] + batched_loss[self._hp.batch_size:])/2
+        losses.per_traj_loss = batched_loss[:self._hp.batch_size] + batched_loss[self._hp.batch_size:]
 
         self.target_network_counter = self.target_network_counter + 1
         if self.target_network_counter % self._hp.update_target_rate == 0:

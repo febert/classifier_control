@@ -16,8 +16,8 @@ class MujocoPredictor:
         self._input_hparams = {
             'img_size': (64, 64),
         }
-        self.env_params['viewer_image_height'] = 192
-        self.env_params['viewer_image_width'] = 256
+        self.env_params['viewer_image_height'] = 48
+        self.env_params['viewer_image_width'] = 64
 
     def __call__(self, context, actions_dict):
         """

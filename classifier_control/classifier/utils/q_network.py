@@ -126,8 +126,16 @@ class DistQNetwork(torch.nn.Module):
         if self._hp.low_dim:
             embeddings = image_pairs
         else:
-            embeddings = self.encoder(image_pairs).view(image_pairs.size(0), -1)
-            
+            if self._hp.film:
+                inp_dict = {
+                    'input': image_pairs,
+                    'act': actions
+                }
+                embeddings = self.encoder(inp_dict)
+                embeddings = embeddings.reshape(image_pairs.size(0), -1)
+            else:
+                embeddings = self.encoder(image_pairs).view(image_pairs.size(0), -1)
+
         e = F.relu(self.linear1(embeddings))
         e = torch.cat([e, actions], dim=1)
         e = F.relu(self.linear2(e))

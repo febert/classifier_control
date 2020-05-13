@@ -68,6 +68,13 @@ class Tabletop(BaseMujocoEnv, SawyerXYZEnv):
         qpos[start_id:(start_id+2)] = pos.copy()
         qvel[start_id:(start_id+2)] = 0
         self.set_state(qpos, qvel)
+
+    def _set_arm_pos_to_start(self):
+        qpos = self.data.qpos.flat.copy()
+        qvel = self.data.qvel.flat.copy()
+        qpos[:9] = self._obs_history[0]['qpos'][:9].copy()
+        self.set_state(qpos, qvel)
+        return self._get_obs()
   #
   # def sample_goal(self):
   #   start_id = 9 + self.targetobj*2
@@ -151,8 +158,10 @@ class Tabletop(BaseMujocoEnv, SawyerXYZEnv):
         """
         mean_obj_dist = self.get_mean_obj_dist()
         # Pretty sure the below is not quite right...
-        arm_dist_despos = np.linalg.norm(self._goal_arm_pose - self.sim.data.qpos[:2])
-        print(f'Distance score is {mean_obj_dist}')
+        arm_dist_despos = np.linalg.norm(self._goal_arm_pose - self.sim.data.qpos[:9])
+        print(f'Object distance score is {mean_obj_dist}')
+        print(f'Arm joint distance score is {arm_dist_despos}')
+        #return arm_dist_despos
         return mean_obj_dist
 
     def has_goal(self):

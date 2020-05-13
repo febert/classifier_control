@@ -101,14 +101,14 @@ class QFunctionController(Policy):
         input_images = input_images[None].repeat(self._hp.num_samples, 1, 1, 1)
         input_states = torch.from_numpy(self._states)[None].float().to(self.device).repeat(self._hp.num_samples, 1)
         #goal_img = torch.from_numpy(self._goal_image)[None].float().to(self.device).repeat(self._hp.num_samples, 1, 1, 1)
-        goal_img = uint2pytorch(resample_imgs(self._goal_image/255., self.img_sz), self._hp.num_samples, self.device)
+        goal_img = uint2pytorch(resample_imgs(self._goal_image, self.img_sz), self._hp.num_samples, self.device)
         actions, scores = [], []
         for i in range(self._hp.action_sample_batches):
             #x_values, y_values = np.linspace(-1, 1, 41), np.linspace(-1, 1, 41)
             #xx, yy = np.meshgrid(x_values, y_values)
             #xypairs = np.dstack([xx, yy]).reshape(-1, 2)
             #action_batch = torch.from_numpy(xypairs).float().cuda()
-            action_batch = torch.FloatTensor(input_images.size(0), 2).uniform_(-1, 1).cuda()
+            action_batch = torch.FloatTensor(input_images.size(0), 4).uniform_(-0.6, 0.6).cuda()
             inp_dict = {'current_img': input_images,
                         'current_state': input_states,
                         'goal_img': goal_img,
