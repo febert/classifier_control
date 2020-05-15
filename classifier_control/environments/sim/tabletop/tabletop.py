@@ -11,7 +11,7 @@ from metaworld.envs.mujoco.sawyer_xyz.base import SawyerXYZEnv
 
 class Tabletop(BaseMujocoEnv, SawyerXYZEnv):
     """Tabletop Manip (Metaworld) Env"""
-    def __init__(self, env_params_dict, reset_state=None, x = 5, y = 5, z = 0):
+    def __init__(self, env_params_dict, reset_state=None, x = .17, y = .65, z = 0.03):
         hand_low=(-0.2, 0.4, 0.0)
         hand_high=(0.2, 0.8, 0.05)
         obj_low=(-0.3, 0.4, 0.1)
@@ -68,20 +68,6 @@ class Tabletop(BaseMujocoEnv, SawyerXYZEnv):
         qpos[start_id:(start_id+2)] = pos.copy()
         qvel[start_id:(start_id+2)] = 0
         self.set_state(qpos, qvel)
-  #
-  # def sample_goal(self):
-  #   start_id = 9 + self.targetobj*2
-  #   qpos = self.data.qpos.flat.copy()
-  #   ogpos = qpos[start_id:(start_id+2)]
-  #   goal_pos = np.random.uniform(
-  #               -0.3,
-  #               0.3,
-  #               size=(2,),
-  #       )
-  #   self._state_goal = goal_pos
-  #   self._set_obj_xyz(goal_pos)
-  #   self.goalim = self.render()
-  #   self._set_obj_xyz(ogpos)
     
     def _reset_hand(self, goal=False):
         pos = self.hand_init_pos.copy()
@@ -120,11 +106,6 @@ class Tabletop(BaseMujocoEnv, SawyerXYZEnv):
                 self._set_obj_xyz(self.obj_init_pos)
                 for _ in range(100):
                     self.do_simulation([0.0, 0.0])
-        #self.targetobj = np.random.randint(3)
-        #self.sample_goal()
-
-        #place = self.targetobj
-        #self.curr_path_length = 0
         self._obs_history = []
         o = self._get_obs()
         full_obs = np.concatenate((o['state'], o['gripper']))
@@ -196,11 +177,12 @@ class Tabletop(BaseMujocoEnv, SawyerXYZEnv):
         obs['object_qpos'] = copy.deepcopy(self.sim.data.qpos[9:].squeeze())
 
         #copy non-image data for environment's use (if needed)
-        self._last_obs = copy.deepcopy(obs)
-        self._obs_history.append(copy.deepcopy(obs))
+        # self._last_obs = copy.deepcopy(obs)
+        # self._obs_history.append(copy.deepcopy(obs))
 
         #get images
-        # obs['images'] = self.render()
+        # obs['images'] = np.zeros((48, 64, 3))
+        obs['images'] = self.render()
         obs['env_done'] = False
         return obs
   

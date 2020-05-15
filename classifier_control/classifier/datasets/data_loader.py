@@ -63,7 +63,7 @@ class FixLenVideoDataset(BaseVideoDataset):
         :param dataset_size:
         """
         super().__init__(data_dir, mpar, data_conf, phase, shuffle)
-        self.n_worker = 4
+        self.n_worker = 0
 
         self.filenames = self._maybe_post_split(self._get_filenames())
         random.seed(1)
@@ -125,7 +125,9 @@ class FixLenVideoDataset(BaseVideoDataset):
             traj_ind = start_ind + ex_index
 
             data_dict = AttrDict()
-            # data_dict = AttrDict(images=(F[key + '/images'].value))
+            # import ipdb; ipdb.set_trace()
+            data_dict = AttrDict(images=(F[key + '/images'].value))
+            # data_dict = AttrDict(images=np.zeros((48, 64, 3)))
             # Fetch data into a dict
             for name in F[key].keys():
                 if name in ['states', 'actions', 'pad_mask']:
