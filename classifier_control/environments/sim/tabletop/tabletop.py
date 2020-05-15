@@ -5,7 +5,7 @@ import copy
 from pyquaternion import Quaternion
 import os
 from gym.spaces import  Dict , Box
-
+import cv2
 from visual_mpc.utils.im_utils import npy_to_mp4
 from metaworld.envs.mujoco.sawyer_xyz.base import SawyerXYZEnv
 
@@ -112,14 +112,14 @@ class Tabletop(BaseMujocoEnv, SawyerXYZEnv):
         self._reset_eval()
 
         #Can try changing this
-        return full_obs
+        return full_obs, o['images']
 
     def step(self, action):
         self.set_xyz_action(action[:3])
         self.do_simulation([action[-1], -action[-1]])
         obs = self._get_obs()
         full_obs = np.concatenate((obs['state'], obs['gripper']))
-        return full_obs, self.dist(), False, None
+        return full_obs,obs['images'], self.dist(), False, None
   
     def render(self):
         return super().render().copy()
@@ -182,7 +182,8 @@ class Tabletop(BaseMujocoEnv, SawyerXYZEnv):
 
         #get images
         # obs['images'] = np.zeros((48, 64, 3))
-        obs['images'] = self.render()
+        img = cv2.resize(np.squeeze(self.render()), dsize=(64,48))
+        obs['images'] = np.rollaxis(img,2)
         obs['env_done'] = False
         return obs
   
