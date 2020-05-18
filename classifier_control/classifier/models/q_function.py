@@ -3,7 +3,7 @@ import torch
 import torch.nn.functional as F
 from classifier_control.classifier.models.base_model import BaseModel
 from classifier_control.classifier.utils.general_utils import AttrDict
-from classifier_control.classifier.utils.q_network import QNetwork
+from classifier_control.classifier.utils.q_network import QNetwork, AugQNetwork
 
 
 class QFunction(BaseModel):
@@ -32,10 +32,19 @@ class QFunction(BaseModel):
             'low_dim':False,
             'gamma':0.0,
             'terminal': True,
-            'resnet': False,
             'random_relabel': False,
             'film': False,
-            'rademacher_actions': False,
+            'resnet': False,
+            'resnet_type': 'resnet50',
+            'tile_actions': False,
+            'sarsa': False,
+            'update_target_rate': 1,
+            'double_q': False,
+            'action_range': [-1.0, 1.0],
+            'random_crops': False,
+            'crop_goal_ind': False,
+            'num_crops': 2,
+            'rademacher_actions': False
         })
 
         # add new params to parent params
@@ -45,9 +54,13 @@ class QFunction(BaseModel):
         return parent_params
 
     def build_network(self, build_encoder=True):
-        self.qnetwork = QNetwork(self._hp)
+        if self._hp.random_crops:
+            q_network_type = AugQNetwork
+        else:
+            q_network_type = QNetwork
+        self.qnetwork = q_network_type(self._hp)
         with torch.no_grad():
-            self.target_qnetwork = QNetwork(self._hp)
+            self.target_qnetwork = q_network_type(self._hp)
 
     def forward(self, inputs):
         """
@@ -74,7 +87,7 @@ class QFunction(BaseModel):
             acts = torch.cat([pos_act, neg_act], dim=0)
             self.acts = acts
 
-            qval = self.qnetwork(image_pairs, None)
+            qval = self.qnetwork(image_pairs, acts)
         else:
             qs = []
             if self._hp.low_dim:
@@ -87,17 +100,10 @@ class QFunction(BaseModel):
                 return qs.detach().cpu().numpy()
 
             with torch.no_grad():
-                if self._hp.rademacher_actions:
-                    for action in [-1, 1]:
-                        actions = torch.FloatTensor(np.full((image_pairs.size(0), self._hp.action_size), action)).cuda()
-                        # actions = torch.FloatTensor(image_pairs.size(0), self._hp.action_size).normal_(mean=0, std=0.3).cuda()
-                        targetq = self.target_qnetwork(image_pairs, actions)
-                        qs.append(targetq)
-                else:
-                    for ns in range(100):
-                        actions = torch.FloatTensor(image_pairs.size(0), self._hp.action_size).uniform_(-1, 1).cuda()
-                        targetq = self.target_qnetwork(image_pairs, actions).detach()
-                        qs.append(targetq)
+                for ns in range(100):
+                    actions = torch.FloatTensor(image_pairs.size(0), self._hp.action_size).uniform_(-1, 1).cuda()
+                    targetq = self.target_qnetwork(image_pairs, actions).detach()
+                    qs.append(targetq)
             qs = torch.stack(qs)
             qval = torch.max(qs, 0)[0].squeeze()
             qval = qval.detach().cpu().numpy()
@@ -127,11 +133,9 @@ class QFunction(BaseModel):
             self.pos_pair_cat = torch.cat([im_t0, im_t1, im_tg], dim=1)
 
         # get negatives:
-        t0 = np.random.randint(0, tlen - tdist - 4, self._hp.batch_size)
+        t0 = np.random.randint(0, tlen - tdist - 1, self._hp.batch_size)
         t1 = t0 + 1
-        #tg = [np.random.randint(t0[b] + tdist + 1, tlen, 1) for b in range(self._hp.batch_size)]
-        tg = [np.random.randint(t0[b] + tdist + 1, tlen-2, 1) for b in range(self._hp.batch_size)]
-        tg = [tg[x] if abs((tg[x]-t0[x]) % 2) == 1 else tg[x]+1 for x in range(len(tg))]
+        tg = [np.random.randint(t0[b] + tdist + 1, tlen, 1) for b in range(self._hp.batch_size)]
         tg = np.array(tg).squeeze()
         t0, t1, tg = torch.from_numpy(t0), torch.from_numpy(t1), torch.from_numpy(tg)
 
@@ -169,32 +173,19 @@ class QFunction(BaseModel):
             
         qs = []
         with torch.no_grad():
-
-            if self._hp.rademacher_actions:
-                targetq = self.target_qnetwork(image_pairs, None)
+            for ns in range(100):
+                actions = torch.FloatTensor(model_output.size(0), self._hp.action_size).uniform_(-1, 1).cuda()
+                targetq = self.target_qnetwork(image_pairs, actions).detach()
                 qs.append(targetq)
-            elif self._hp.rademacher_actions:
-                for action in [-1, 1]:
-                    actions = torch.FloatTensor(np.full((image_pairs.size(0), self._hp.action_size), action)).cuda()
-                    # actions = torch.FloatTensor(image_pairs.size(0), self._hp.action_size).normal_(mean=0, std=0.3).cuda()
-                    targetq = self.target_qnetwork(image_pairs, actions)
-                    qs.append(targetq)
-            else:
-                for ns in range(100):
-                    actions = torch.FloatTensor(model_output.size(0), self._hp.action_size).uniform_(-1, 1).cuda()
-                    targetq = self.target_qnetwork(image_pairs, actions).detach()
-                    qs.append(targetq)
-        qs = torch.stack(qs).squeeze().detach()
+        qs = torch.stack(qs)
         lb = self.labels.to(self._hp.device)
+        
         losses = AttrDict()
         if self._hp.terminal:
-            target = lb + self._hp.gamma * torch.max(qs, 1)[0].squeeze() * (1-lb) #terminal value
+            target = lb + self._hp.gamma * torch.max(qs, 0)[0].squeeze() * (1-lb) #terminal value
         else:
             target = lb + self._hp.gamma * torch.max(qs, 0)[0].squeeze()
-        corres = torch.where(self.acts == 1, model_output[:, 0], model_output[:, 1])
-        #losses.total_loss = F.mse_loss(target, model_output.squeeze())
-        losses.total_loss = F.mse_loss(target, corres)
-        
+        losses.total_loss = F.mse_loss(target, model_output.squeeze())
         self.target_qnetwork.load_state_dict(self.qnetwork.state_dict())
         return losses
     

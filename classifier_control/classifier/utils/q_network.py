@@ -54,7 +54,7 @@ class QNetwork(torch.nn.Module):
         self.linear3 = Linear(in_dim=128, out_dim=128, builder=self._hp.builder)
         self.linear4 = Linear(in_dim=128, out_dim=128, builder=self._hp.builder)
         self.linear5 = Linear(in_dim=128, out_dim=128, builder=self._hp.builder)
-        self.linear6 = Linear(in_dim=128, out_dim=2, builder=self._hp.builder)
+        self.linear6 = Linear(in_dim=128, out_dim=1, builder=self._hp.builder)
 
     def forward(self, image_pairs, actions):
 
@@ -65,7 +65,7 @@ class QNetwork(torch.nn.Module):
                 actions_tiled = tile_action_into_image(actions, (image_pairs.shape[2], image_pairs.shape[3]))
                 resnet_inp = torch.cat((image_pairs, actions_tiled), dim=1)
                 out = self.resnet(resnet_inp)
-                return F.softmax(out)
+                return out
             else:
                 e = self.resnet(image_pairs)
                 e = torch.cat([e, actions], dim=1)
@@ -73,7 +73,7 @@ class QNetwork(torch.nn.Module):
                 e = F.relu(self.linear3(e))
                 e = F.relu(self.linear4(e))
                 e = F.relu(self.linear5(e))
-                qvalue = F.softmax(self.linear6(e))
+                qvalue = self.linear6(e)
                 return qvalue
 
         if self._hp.low_dim:
@@ -81,10 +81,6 @@ class QNetwork(torch.nn.Module):
         else:
             embeddings = self.encoder(image_pairs).view(image_pairs.size(0), -1)
 
-<<<<<<< Updated upstream
-=======
-
->>>>>>> Stashed changes
         e = F.relu(self.linear1(embeddings))
         if self._hp.film:
             film = F.relu(self.film1(actions))
@@ -94,14 +90,8 @@ class QNetwork(torch.nn.Module):
             action_gamma, action_beta = film[:, :128], film[:, 128:]
             e = e * action_gamma + action_beta
         else:
-<<<<<<< Updated upstream
             e = torch.cat([e, actions], dim=1)
             e = F.relu(self.linear2(e))
-=======
-            pass
-            #e = torch.cat([e, actions], dim=1)
-            #e = F.relu(self.linear2(e))
->>>>>>> Stashed changes
         e = F.relu(self.linear3(e))
         e = F.relu(self.linear4(e))
         e = F.relu(self.linear5(e))

@@ -219,10 +219,6 @@ class ModelTrainer(BaseTrainer):
             'lr': 1e-3,
             'momentum': 0,      # momentum in RMSProp / SGD optimizer
             'adam_beta': 0.9,       # beta1 param in Adam
-            'upweight_losses': False,
-            'upweight_losses_frac': 0.2,
-            'upweight_scale': 5,
-            'upweight_schedule': 1,
         }
         # add new params to parent params
         parent_params = HParams()
@@ -231,8 +227,6 @@ class ModelTrainer(BaseTrainer):
         return parent_params
     
     def train(self, start_epoch):
-        self.traj_weights = torch.ones(len(self.train_loader.dataset), dtype=torch.float32).cuda()
-
         for epoch in range(start_epoch, self._hp.num_epochs):
             if epoch > start_epoch:
                 self.val(not (epoch - start_epoch) % 3)
@@ -266,7 +260,6 @@ class ModelTrainer(BaseTrainer):
         self.log_images_interval = int(epoch_len / self.args.imepoch)
 
         print('starting epoch ', epoch)
-        epoch_per_traj_losses = torch.zeros(len(self.train_loader.dataset), dtype=torch.float32).cuda()
 
         for self.batch_idx, sample_batched in enumerate(self.train_loader):
             data_load_time.update(time.time() - end)
@@ -275,20 +268,9 @@ class ModelTrainer(BaseTrainer):
             self.optimizer.zero_grad()
             output = self.model(inputs)
             losses = self.model.loss(output)
-            # Save losses for each trajectory on this epoch to decide how to upweight losses in the future
-
-            if 'per_traj_loss' in losses:
-                epoch_per_traj_losses[sample_batched['index']] = losses.per_traj_loss.detach()
-
-            if self._hp.upweight_losses:
-                multipliers = self.traj_weights[sample_batched['index']].detach()
-                losses.total_loss = (losses.per_traj_loss * multipliers).mean()
-
             losses.total_loss.backward()
             self.optimizer.step()
-            if 'per_traj_loss' in losses:
-                del losses['per_traj_loss']
-
+            
             upto_log_time.update(time.time() - end)
             if self.log_outputs_now:
                 self.model.log_outputs(output, inputs, losses, self.global_step,
@@ -312,13 +294,6 @@ class ModelTrainer(BaseTrainer):
             
             del output, losses
             self.global_step = self.global_step + 1
-
-        # Compute upweight losses for next epoch
-        largest_inds = torch.topk(epoch_per_traj_losses, int(self._hp.upweight_losses_frac * len(self.train_loader.dataset)), dim=0)[1]
-        if epoch % self._hp.upweight_schedule == 0:
-            self.traj_weights = torch.ones(len(self.train_loader.dataset), dtype=torch.float32).cuda()
-            self.traj_weights[largest_inds] *= self._hp.upweight_scale
-
         self.model.to(torch.device('cpu'))
 
     def val(self, test_control=True):
@@ -331,21 +306,19 @@ class ModelTrainer(BaseTrainer):
                 self.model_test.load_state_dict(self.model.state_dict())
             losses_meter = RecursiveAverageMeter()
             with autograd.no_grad():
+
                 preds = []
                 idx_dists = []
                 gripper_dists = []
                 obj_dists = []
                 robot_joint_dists = []
                 mse_dists = []
-                print(len(self.train_loader))
 
                 for batch_idx, sample_batched in enumerate(self.val_loader):
                     inputs = AttrDict(map_dict(lambda x: x.to(self.device), sample_batched))
 
                     output = self.model_val(inputs)
                     losses = self.model_val.loss(output)
-                    if 'per_traj_loss' in losses:
-                        del losses['per_traj_loss']
 
                     if self._hp.model_test is not None and self.run_testmetrics:
                         #run_through_traj(self.model_test, inputs)
