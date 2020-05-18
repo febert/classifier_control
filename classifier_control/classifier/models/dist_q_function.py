@@ -7,7 +7,7 @@ import torch.nn as nn
 import torch.nn.functional as F
 
 from classifier_control.classifier.models.base_model import BaseModel
-from classifier_control.classifier.utils.q_network import DistQNetwork
+from classifier_control.classifier.utils.q_network import DistQNetwork, AugDistQNetwork
 
 class DistQFunction(BaseModel):
 
@@ -20,7 +20,6 @@ class DistQFunction(BaseModel):
 
         assert self._hp.batch_size != -1   # make sure that batch size was overridden
 
-        self.tdist_classifiers = []
         self.build_network()
         self._use_pred_length = False
         self.target_network_counter = 0
@@ -37,12 +36,17 @@ class DistQFunction(BaseModel):
             'est_max_samples': 100,
             'resnet': False,
             'resnet_type': 'resnet50',
-            'tile_actions': True,
+            'tile_actions': False,
             'sarsa': False,
             'update_target_rate': 1,
             'double_q': False,
             'action_range': [-1.0, 1.0],
             'film': False,
+            'random_crops': False,
+            'crop_goal_ind': False,
+            'num_crops': 2,
+            'num_bins': 10,
+            'rademacher_actions': False
         })
 
 
@@ -53,9 +57,13 @@ class DistQFunction(BaseModel):
         return parent_params
 
     def build_network(self, build_encoder=True):
-        self.qnetwork = DistQNetwork(self._hp)
+        if self._hp.random_crops:
+            q_network_type = AugDistQNetwork
+        else:
+            q_network_type = DistQNetwork
+        self.qnetwork = q_network_type(self._hp)
         with torch.no_grad():
-            self.target_qnetwork = DistQNetwork(self._hp)
+            self.target_qnetwork = q_network_type(self._hp)
 
     def forward(self, inputs):
         """
@@ -97,10 +105,19 @@ class DistQFunction(BaseModel):
             return qval.detach().cpu().numpy()
 
           with torch.no_grad():
-              for ns in range(self._hp.est_max_samples):
-                  actions = torch.FloatTensor(image_pairs.size(0), self._hp.action_size).uniform_(*self._hp.action_range).cuda()
+            if self._hp.rademacher_actions:
+                for action in [-1, 1]:
+                  actions = torch.FloatTensor(np.full((image_pairs.size(0), self._hp.action_size), action)).cuda()
+                  # actions = torch.FloatTensor(image_pairs.size(0), self._hp.action_size).normal_(mean=0, std=0.3).cuda()
                   targetq = self.target_qnetwork(image_pairs, actions)
                   qs.append(targetq)
+            else:
+                for ns in range(self._hp.est_max_samples):
+                  actions = torch.FloatTensor(image_pairs.size(0), self._hp.action_size).uniform_(*self._hp.action_range).cuda()
+                  #actions = torch.FloatTensor(image_pairs.size(0), self._hp.action_size).normal_(mean=0, std=0.3).cuda()
+                  targetq = self.target_qnetwork(image_pairs, actions)
+                  qs.append(targetq)
+
           qs = torch.stack(qs)
 
           ## Compute Expectation
@@ -111,7 +128,6 @@ class DistQFunction(BaseModel):
         return qval
     
     def sample_image_triplet_actions(self, images, actions, tlen, tdist, states):
-        
         # get positives:
         t0 = np.random.randint(0, tlen - tdist - 2, self._hp.batch_size)
         t1 = t0 + 1
@@ -134,9 +150,10 @@ class DistQFunction(BaseModel):
             self.pos_pair_cat = torch.cat([im_t0, im_t1, im_tg], dim=1)
 
         # get negatives:
-        t0 = np.random.randint(0, tlen - tdist - 1, self._hp.batch_size)
+        t0 = np.random.randint(0, tlen - tdist - 4, self._hp.batch_size)
         t1 = t0 + 1
-        tg = [np.random.randint(t0[b] + tdist + 1, tlen, 1) for b in range(self._hp.batch_size)]
+        tg = [np.random.randint(t0[b] + tdist + 1, tlen-2, 1) for b in range(self._hp.batch_size)]
+        tg = [tg[x] if abs((tg[x]-t0[x]) % 2) == 1 else tg[x]+1 for x in range(len(tg))]
         tg = np.array(tg).squeeze()
         t0, t1, tg = torch.from_numpy(t0), torch.from_numpy(t1), torch.from_numpy(tg)
 
@@ -180,13 +197,30 @@ class DistQFunction(BaseModel):
                     qs.append(targetq)
                     total_actions.append(actions)
             else:
-                for ns in range(self._hp.est_max_samples):
-                    actions = torch.FloatTensor(model_output.size(0), self._hp.action_size).uniform_(*self._hp.action_range).cuda()
-                    targetq = self.target_qnetwork(image_pairs, actions)
-                    qs.append(targetq)
-                    total_actions.append(actions)
-        qs = torch.stack(qs)
-        total_actions = torch.stack(total_actions)
+                #for ns in range(self._hp.est_max_samples):
+                #    actions = torch.FloatTensor(model_output.size(0), self._hp.action_size).uniform_(*self._hp.action_range).cuda()
+                #    targetq = self.target_qnetwork(image_pairs, actions)
+                #    qs.append(targetq)
+                #    total_actions.append(actions)
+                if self._hp.rademacher_actions:
+                    for action in [-1, 1]:
+                        actions = torch.FloatTensor(np.full((image_pairs.size(0), self._hp.action_size), action)).cuda()
+                        # actions = torch.FloatTensor(image_pairs.size(0), self._hp.action_size).normal_(mean=0, std=0.3).cuda()
+                        targetq = self.target_qnetwork(image_pairs, actions)
+                        qs.append(targetq)
+                        total_actions.append(actions)
+                else:
+                    image_pairs_rep = image_pairs[None].repeat(self._hp.est_max_samples, 1, 1, 1, 1) # [num_samp, B, C, H, W]
+                    image_pairs_rep = image_pairs_rep.view(*[self._hp.est_max_samples * model_output.size(0)] + list(image_pairs_rep.shape[2:]))
+                    actions = torch.FloatTensor(self._hp.est_max_samples*model_output.size(0), self._hp.action_size).uniform_(*self._hp.action_range).cuda()
+                    #actions = torch.FloatTensor(self._hp.est_max_samples*model_output.size(0), self._hp.action_size).normal_(mean=0.0, std=0.3).cuda()
+                    targetq = self.target_qnetwork(image_pairs_rep, actions)
+                    qs = targetq.view(self._hp.est_max_samples, model_output.size(0), -1)
+                    total_actions = actions.view(self._hp.est_max_samples, model_output.size(0), -1)
+
+        if isinstance(qs, list):
+            qs = torch.stack(qs)
+            total_actions = torch.stack(total_actions)
         qval = torch.sum((1 + torch.arange(qs.shape[2])[None]).float().to(self._hp.device) * qs, 2)
         ## Select corresponding target Q distribution
         ids = qval.min(0)[1]
@@ -201,7 +235,7 @@ class DistQFunction(BaseModel):
         shifted[:, 1:] = qs[:, :-1]
         shifted[:, -1] += qs[:, -1]
         lb = self.labels.to(self._hp.device).unsqueeze(-1)
-        isg = torch.zeros((self._hp.batch_size * 2, 10)).to(self._hp.device)
+        isg = torch.zeros((self._hp.batch_size * 2, self._hp.num_bins)).to(self._hp.device)
         isg[:,0] = 1
         
         ## If next state is goal then target should be 0, else should be shifted
@@ -214,7 +248,7 @@ class DistQFunction(BaseModel):
         losses.total_loss = (target * (log_t - log_q)).sum(1).mean()
         batched_loss = (target * (log_t - log_q)).sum(1)
         # Reduce [2*B] to [B]
-        losses.per_traj_loss = batched_loss[:self._hp.batch_size] + batched_loss[self._hp.batch_size:]
+        losses.per_traj_loss = (batched_loss[:self._hp.batch_size] + batched_loss[self._hp.batch_size:]) / 2
 
         self.target_network_counter = self.target_network_counter + 1
         if self.target_network_counter % self._hp.update_target_rate == 0:
@@ -250,7 +284,6 @@ class DistQFunctionTestTime(DistQFunction):
         parent_params = super()._default_hparams()
         parent_params.add_hparam('classifier_restore_path', None)
         return parent_params
-      
       
     def visualize_test_time(self, content_dict, visualize_indices, verbose_folder):
         pass

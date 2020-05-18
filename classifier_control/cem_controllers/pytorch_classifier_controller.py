@@ -7,6 +7,8 @@ from collections import OrderedDict
 from classifier_control.classifier.utils.DistFuncEvaluation import DistFuncEvaluation
 from classifier_control.cem_controllers.mujoco_predictor import MujocoPredictor
 
+from classifier_control.cem_controllers.gt_dist_controller import GroundTruthDistController
+
 from classifier_control.classifier.models.base_tempdistclassifier import BaseTempDistClassifierTestTime
 
 from robonet.video_prediction.testing import VPredEvaluation
@@ -108,6 +110,28 @@ class LearnedCostController(CEMBaseController):
             parent_params.add_hparam(k, default_dict[k])
         return parent_params
 
+    @staticmethod
+    def kendall_tau(scores_1, scores_2, num_pairs_ret=10):
+        """
+        Given two np arrays of scores for the same trajectories, return the normalized Kendall tau score
+        (disagreement) between them
+        """
+        assert len(scores_1) == len(scores_2)
+        ## Double argsort gives rankings
+        total = len(scores_1)
+        ranks_1, ranks_2 = scores_1.argsort().argsort(), scores_2.argsort().argsort()
+        disagree = 0
+        ret = [] #indices to return
+        for i in range(total):
+            for j in range(i+1, total):
+                if (ranks_1[i] < ranks_1[j] and ranks_2[i] > ranks_2[j]) or\
+                   (ranks_1[i] > ranks_1[j] and ranks_2[i] < ranks_2[j]):
+                    disagree += 1
+                    if len(ret) < num_pairs_ret:
+                        ret.append((i, j))
+        num_pairs = total * (total + 1) / 2.0
+        return 1.0 * disagree / num_pairs, ret
+
     def evaluate_rollouts(self, actions, cem_itr):
         previous_actions = np.concatenate([x[None] for x in self._sampler.chosen_actions[-self._net_context:]], axis=0)
         previous_actions = np.tile(previous_actions, [actions.shape[0], 1, 1])
@@ -123,19 +147,27 @@ class LearnedCostController(CEMBaseController):
         }
         prediction_dict = self.predictor(context, {'actions': actions})
         gen_images = prediction_dict['predicted_frames']
+        gen_states = prediction_dict['predicted_states']
 
         scores = []
+        true_scores = []
 
         for tpred in range(gen_images.shape[1]):
             input_images = ten2pytrch(gen_images[:, tpred], self.device)
             inp_dict = {'current_img': input_images,
                         'goal_img': uint2pytorch(resample_imgs(self._goal_image, self.img_sz), gen_images.shape[0], self.device)}
             print('peform prediction for ', tpred)
+
             scores.append(self.learned_cost.predict(inp_dict))
+            true_scores.append(GroundTruthDistController.gt_cost(inp_dict))
 
         # weight final time step by some number and average over time.
         scores = np.stack(scores, 1)
         scores = self._weight_scores(scores)
+
+        true_scores = self._weight_scores(np.stack(true_scores, 1))
+        kendall_tau, disagree_inds = self.kendall_tau(scores, true_scores)
+        print(f'Disagreement between learned cost and true: {kendall_tau}')
 
         if self._verbose_condition(cem_itr):
             verbose_folder = self.traj_log_dir + "/planning_{}_itr_{}".format(self._t, cem_itr)
@@ -166,6 +198,15 @@ class LearnedCostController(CEMBaseController):
             # save scores
             content_dict['scores'] = scores[visualize_indices]
 
+            # render disagreeing trajs
+            for c in range(self._n_cam):
+                for i in range(2):
+                    verbose_images = [(gen_images[g_i[i], :] * 255).astype(np.uint8) for g_i in disagree_inds]
+                    verbose_images = [resample_imgs(traj, self._goal_image.shape).squeeze() for traj in verbose_images]
+                    row_name = 'cam_{}_disagree_pairs_row{}'.format(c, i)
+                    content_dict[row_name] = save_gifs_direct(verbose_folder,
+                                                              row_name, verbose_images)
+
             html_page = fill_template(cem_itr, self._t, content_dict, img_height=self._hp.verbose_img_height)
             save_html_direct("{}/plan.html".format(verbose_folder), html_page)
 
@@ -189,9 +230,11 @@ class LearnedCostController(CEMBaseController):
         return scores
 
 
-    def act(self, t=None, i_tr=None, images=None, goal_image=None, verbose_worker=None, state=None, policy_out=None):
+
+    def act(self, t=None, i_tr=None, images=None, goal_image=None, verbose_worker=None, state=None, policy_out=None, goal_obj_pose=None):
         self._images = images
         self._verbose_worker = verbose_worker
+        self._goal_obj_pos = goal_obj_pose
         if self.agentparams['T'] - t < self.predictor.horizon:
             self.last_plan = True
         else:

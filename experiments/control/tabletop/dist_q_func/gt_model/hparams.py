@@ -36,7 +36,7 @@ policy = {
     'type': LearnedCostController,
     'replan_interval': 13,
     'nactions': 13,
-    'num_samples': 600,
+    #'num_samples': 600,
     'selection_frac': 0.03,
     'sampler': CorrelatedNoiseSampler,
     'initial_std':  [0.6, 0.6, 0.3, 0.3],

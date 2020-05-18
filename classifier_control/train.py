@@ -276,7 +276,9 @@ class ModelTrainer(BaseTrainer):
             output = self.model(inputs)
             losses = self.model.loss(output)
             # Save losses for each trajectory on this epoch to decide how to upweight losses in the future
-            epoch_per_traj_losses[sample_batched['index']] = losses.per_traj_loss.detach()
+
+            if 'per_traj_loss' in losses:
+                epoch_per_traj_losses[sample_batched['index']] = losses.per_traj_loss.detach()
 
             if self._hp.upweight_losses:
                 multipliers = self.traj_weights[sample_batched['index']].detach()
@@ -284,8 +286,8 @@ class ModelTrainer(BaseTrainer):
 
             losses.total_loss.backward()
             self.optimizer.step()
-
-            del losses['per_traj_loss']
+            if 'per_traj_loss' in losses:
+                del losses['per_traj_loss']
 
             upto_log_time.update(time.time() - end)
             if self.log_outputs_now:
@@ -342,7 +344,9 @@ class ModelTrainer(BaseTrainer):
 
                     output = self.model_val(inputs)
                     losses = self.model_val.loss(output)
-                    del losses['per_traj_loss']
+                    if 'per_traj_loss' in losses:
+                        del losses['per_traj_loss']
+
                     if self._hp.model_test is not None and self.run_testmetrics:
                         #run_through_traj(self.model_test, inputs)
                         preds.append(get_pred_dists(inputs, self.model_test))

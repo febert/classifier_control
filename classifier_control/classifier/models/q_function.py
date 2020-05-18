@@ -35,6 +35,7 @@ class QFunction(BaseModel):
             'resnet': False,
             'random_relabel': False,
             'film': False,
+            'rademacher_actions': False,
         })
 
         # add new params to parent params
@@ -73,13 +74,7 @@ class QFunction(BaseModel):
             acts = torch.cat([pos_act, neg_act], dim=0)
             self.acts = acts
 
-            import ipdb; ipdb.set_trace()
-            #rnd_actions = torch.FloatTensor(self._hp.action_size).uniform_(-1, 1).cuda()[None].repeat(image_pairs.shape[0], 1)
-            rnd_actions = acts[0].repeat(image_pairs.shape[0], 1)
-            rnd_image_pairs = image_pairs[0].repeat(image_pairs.shape[0], 1)
-            print(self.qnetwork(rnd_image_pairs, rnd_actions))
-            qval = self.qnetwork(image_pairs, acts)
-            print(qval)
+            qval = self.qnetwork(image_pairs, None)
         else:
             qs = []
             if self._hp.low_dim:
@@ -92,10 +87,17 @@ class QFunction(BaseModel):
                 return qs.detach().cpu().numpy()
 
             with torch.no_grad():
-                for ns in range(100):
-                    actions = torch.FloatTensor(image_pairs.size(0), self._hp.action_size).uniform_(-1, 1).cuda()
-                    targetq = self.target_qnetwork(image_pairs, actions).detach()
-                    qs.append(targetq)
+                if self._hp.rademacher_actions:
+                    for action in [-1, 1]:
+                        actions = torch.FloatTensor(np.full((image_pairs.size(0), self._hp.action_size), action)).cuda()
+                        # actions = torch.FloatTensor(image_pairs.size(0), self._hp.action_size).normal_(mean=0, std=0.3).cuda()
+                        targetq = self.target_qnetwork(image_pairs, actions)
+                        qs.append(targetq)
+                else:
+                    for ns in range(100):
+                        actions = torch.FloatTensor(image_pairs.size(0), self._hp.action_size).uniform_(-1, 1).cuda()
+                        targetq = self.target_qnetwork(image_pairs, actions).detach()
+                        qs.append(targetq)
             qs = torch.stack(qs)
             qval = torch.max(qs, 0)[0].squeeze()
             qval = qval.detach().cpu().numpy()
@@ -125,9 +127,11 @@ class QFunction(BaseModel):
             self.pos_pair_cat = torch.cat([im_t0, im_t1, im_tg], dim=1)
 
         # get negatives:
-        t0 = np.random.randint(0, tlen - tdist - 1, self._hp.batch_size)
+        t0 = np.random.randint(0, tlen - tdist - 4, self._hp.batch_size)
         t1 = t0 + 1
-        tg = [np.random.randint(t0[b] + tdist + 1, tlen, 1) for b in range(self._hp.batch_size)]
+        #tg = [np.random.randint(t0[b] + tdist + 1, tlen, 1) for b in range(self._hp.batch_size)]
+        tg = [np.random.randint(t0[b] + tdist + 1, tlen-2, 1) for b in range(self._hp.batch_size)]
+        tg = [tg[x] if abs((tg[x]-t0[x]) % 2) == 1 else tg[x]+1 for x in range(len(tg))]
         tg = np.array(tg).squeeze()
         t0, t1, tg = torch.from_numpy(t0), torch.from_numpy(t1), torch.from_numpy(tg)
 
@@ -165,19 +169,31 @@ class QFunction(BaseModel):
             
         qs = []
         with torch.no_grad():
-            for ns in range(100):
-                actions = torch.FloatTensor(model_output.size(0), self._hp.action_size).uniform_(-1, 1).cuda()
-                targetq = self.target_qnetwork(image_pairs, actions).detach()
+
+            if self._hp.rademacher_actions:
+                targetq = self.target_qnetwork(image_pairs, None)
                 qs.append(targetq)
-        qs = torch.stack(qs)
+            elif self._hp.rademacher_actions:
+                for action in [-1, 1]:
+                    actions = torch.FloatTensor(np.full((image_pairs.size(0), self._hp.action_size), action)).cuda()
+                    # actions = torch.FloatTensor(image_pairs.size(0), self._hp.action_size).normal_(mean=0, std=0.3).cuda()
+                    targetq = self.target_qnetwork(image_pairs, actions)
+                    qs.append(targetq)
+            else:
+                for ns in range(100):
+                    actions = torch.FloatTensor(model_output.size(0), self._hp.action_size).uniform_(-1, 1).cuda()
+                    targetq = self.target_qnetwork(image_pairs, actions).detach()
+                    qs.append(targetq)
+        qs = torch.stack(qs).squeeze().detach()
         lb = self.labels.to(self._hp.device)
-        
         losses = AttrDict()
         if self._hp.terminal:
-            target = lb + self._hp.gamma * torch.max(qs, 0)[0].squeeze() * (1-lb) #terminal value
+            target = lb + self._hp.gamma * torch.max(qs, 1)[0].squeeze() * (1-lb) #terminal value
         else:
             target = lb + self._hp.gamma * torch.max(qs, 0)[0].squeeze()
-        losses.total_loss = F.mse_loss(target, model_output.squeeze())
+        corres = torch.where(self.acts == 1, model_output[:, 0], model_output[:, 1])
+        #losses.total_loss = F.mse_loss(target, model_output.squeeze())
+        losses.total_loss = F.mse_loss(target, corres)
         
         self.target_qnetwork.load_state_dict(self.qnetwork.state_dict())
         return losses

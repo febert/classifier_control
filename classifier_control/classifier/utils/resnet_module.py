@@ -22,19 +22,19 @@ def repeat_weights(weights, new_channels):
     new_shape = list(weights.shape[:])
     new_shape[1] = new_channels
     new_weights = torch.zeros(new_shape, dtype=weights.dtype, layout=weights.layout, device=weights.device)
-    for i in range(0, new_channels):
-        new_weights[:, i] = weights[:, i % prev_channels]
+    for i in range(new_channels):
+        new_weights.data[:, i] = weights[:, i % prev_channels].clone()
     return new_weights
 
 
 def get_resnet_encoder(resnet_type, num_features_out, channels_in=3, freeze=False):
     model = resnet_type(pretrained=True, progress=True)
     for param in model.parameters():
-        param.requires_grad = not freeze
+        param.requires_grad = True
     model.fc = nn.Linear(in_features=model.fc.in_features, out_features=num_features_out)
 
     if channels_in != 3:
-        orig_weights = model.conv1.weight.clone()
+        orig_weights = model.conv1.weight.clone().detach().data
         new_weights = repeat_weights(orig_weights, channels_in)
         new_layer = nn.Conv2d(channels_in, orig_weights.shape[0],  kernel_size=(7, 7), stride=(2, 2), padding=(3, 3), bias=False)
         new_layer.weight = nn.Parameter(new_weights)

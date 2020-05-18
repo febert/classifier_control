@@ -106,7 +106,8 @@ class GroundTruthDistController(CEMBaseController):
             parent_params.add_hparam(k, default_dict[k])
         return parent_params
 
-    def gt_cost(self, inp_dict):
+    @staticmethod
+    def gt_cost(inp_dict):
         states = inp_dict['current_state'][:, 9:15]
         goal = inp_dict['goal_state']
         return np.sqrt(np.sum((states - goal)**2, axis=1))

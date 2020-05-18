@@ -12,8 +12,8 @@ configuration = {
     'model': DistQFunction,
     'logger': TdistClassifierLogger,
     'data_dir': os.environ['VMPC_DATA'] + '/classifier_control/data_collection/sim/tabletop-texture',       # 'directory containing data.' ,
-    'batch_size' : 32,
-#     'num_epochs': 200,
+    'batch_size': 32,
+    'num_epochs': 500,
 }
 
 configuration = AttrDict(configuration)
@@ -27,4 +27,10 @@ model_config = {
 #     'low_dim':True,
     'gamma':0.8,
     'action_size': 4,
+    'random_crops': True,
+    #'est_max_samples': 100,
+    'action_range': [-0.6, 0.6],
+    'crop_goal_ind': True,
+    'resnet': True,
+    'resnet_type': 'resnet18'
 }
