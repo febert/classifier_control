@@ -155,6 +155,8 @@ class LearnedCostController(CEMBaseController):
         for tpred in range(gen_images.shape[1]):
             input_images = ten2pytrch(gen_images[:, tpred], self.device)
             inp_dict = {'current_img': input_images,
+                        'current_state': gen_states[:, tpred],
+                        'goal_state': self._goal_obj_pos,
                         'goal_img': uint2pytorch(resample_imgs(self._goal_image, self.img_sz), gen_images.shape[0], self.device)}
             print('peform prediction for ', tpred)
 
@@ -173,7 +175,7 @@ class LearnedCostController(CEMBaseController):
             verbose_folder = self.traj_log_dir + "/planning_{}_itr_{}".format(self._t, cem_itr)
 
             content_dict = OrderedDict()
-            visualize_indices = scores.argsort()[:20]
+            visualize_indices = scores.argsort()[:10]
 
             # start images
             for c in range(self._n_cam):
@@ -228,7 +230,6 @@ class LearnedCostController(CEMBaseController):
         else:
             scores = scores[:, -1].copy()
         return scores
-
 
 
     def act(self, t=None, i_tr=None, images=None, goal_image=None, verbose_worker=None, state=None, policy_out=None, goal_obj_pose=None):
