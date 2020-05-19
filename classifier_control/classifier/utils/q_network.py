@@ -17,10 +17,10 @@ class ActorNetwork(torch.nn.Module):
         out_size = self.encoder.get_output_size()
         self.mlp = torch.nn.Sequential()
 
-        self.mlp.add_module(Linear(in_dim=out_size[0] * 5 * 5, out_dim=128, builder=self._hp.builder))
-        for _ in range(3):
-            self.mlp.add_module(Linear(in_dim=128, out_dim=128, builder=self._hp.builder))
-        self.mlp.add_module(Linear(in_dim=128, out_dim=self._hp.action_size, builder=self._hp.builder))
+        self.mlp.add_module('linear_1', Linear(in_dim=out_size[0] * 5 * 5, out_dim=128, builder=self._hp.builder))
+        for i in range(3):
+            self.mlp.add_module(f'linear_{i+1}', Linear(in_dim=128, out_dim=128, builder=self._hp.builder))
+        self.mlp.add_module('linear_final', Linear(in_dim=128, out_dim=self._hp.action_size, builder=self._hp.builder))
 
     def forward(self, image_pairs):
         embeddings = self.encoder(image_pairs).view(image_pairs.size(0), -1)
@@ -59,10 +59,10 @@ class QNetwork(torch.nn.Module):
             if self._hp.tile_actions:
                 num_inp_channels += self._hp.action_size
             else:
-                self.encoder.add_module(Linear(in_dim=128 + self._hp.action_size, out_dim=128, builder=self._hp.builder))
+                self.encoder.add_module('linear_1', Linear(in_dim=128 + self._hp.action_size, out_dim=128, builder=self._hp.builder))
                 for i in range(3):
-                    self.encoder.add_module(Linear(in_dim=128, out_dim=128, builder=self._hp.builder))
-                self.encoder.add_module(Linear(in_dim=128, out_dim=self.encoder_output_size, builder=self._hp.builder))
+                    self.encoder.add_module(f'linear_{i+1}', Linear(in_dim=128, out_dim=128, builder=self._hp.builder))
+                self.encoder.add_module('linear_final', Linear(in_dim=128, out_dim=self.encoder_output_size, builder=self._hp.builder))
 
         elif self._hp.low_dim:
             self.linear1 = Linear(in_dim=2*self._hp.state_size, out_dim=128, builder=self._hp.builder)
@@ -74,9 +74,9 @@ class QNetwork(torch.nn.Module):
         self.linear2 = Linear(in_dim=128 + self._hp.action_size, out_dim=self.encoder_output_size, builder=self._hp.builder)
 
         self.mlp = torch.nn.Sequential()
-        for _ in range(3):
-            self.mlp.add_module(Linear(in_dim=128, out_dim=128, builder=self._hp.builder))
-        self.mlp.add_module(Linear(in_dim=128, out_dim=self.num_outputs, builder=self._hp.builder))
+        for i in range(3):
+            self.mlp.add_module(f'linear_{i}', Linear(in_dim=128, out_dim=128, builder=self._hp.builder))
+        self.mlp.add_module('linear_final', Linear(in_dim=128, out_dim=self.num_outputs, builder=self._hp.builder))
 
     def forward(self, image_pairs, actions):
         if self._hp.resnet:
