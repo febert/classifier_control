@@ -107,8 +107,11 @@ class ModelTrainer(BaseTrainer):
         if self._hp.model_test is not None:
             self.model_test = build_phase(self._hp.logger, self._hp.model_test, 'test')
 
-        self.optimizer = Adam(self.model.parameters(), lr=self._hp.lr)
+        #self.optimizer = Adam(self.model.parameters(), lr=self._hp.lr)
         # self.optimizer = self.get_optimizer_class()(self.model.parameters(), lr=self._hp.lr)
+        self.critic_optimizer = Adam(self.model.qnetwork.parameters(), lr=self._hp.lr)
+        self.actor_optimizer = Adam(self.model.actor_network.parameters(), lr=self._hp.lr)
+
         self._hp.mpar = self.model._hp
 
         # TODO clean up resuming
@@ -265,11 +268,15 @@ class ModelTrainer(BaseTrainer):
             data_load_time.update(time.time() - end)
             inputs = AttrDict(map_dict(lambda x: x.to(self.device), sample_batched))
 
-            self.optimizer.zero_grad()
+            self.critic_optimizer.zero_grad()
             output = self.model(inputs)
             losses = self.model.loss(output)
-            losses.total_loss.backward()
-            self.optimizer.step()
+            losses.critic_loss.backward()
+            self.critic_optimizer.step()
+
+            self.actor_optimizer.zero_grad()
+            losses.actor_loss.backward()
+            self.actor_optimizer.step()
             
             upto_log_time.update(time.time() - end)
             if self.log_outputs_now:

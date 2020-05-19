@@ -9,6 +9,24 @@ import torchvision
 import kornia
 
 
+class ActorNetwork(torch.nn.Module):
+    def __init__(self, hp):
+        super().__init__()
+        self._hp = hp
+        self.encoder = ConvEncoder(self._hp)
+        out_size = self.encoder.get_output_size()
+        self.mlp = torch.nn.Sequential()
+
+        self.mlp.add_module(Linear(in_dim=out_size[0] * 5 * 5, out_dim=128, builder=self._hp.builder))
+        for _ in range(3):
+            self.mlp.add_module(Linear(in_dim=128, out_dim=128, builder=self._hp.builder))
+        self.mlp.add_module(Linear(in_dim=128, out_dim=self._hp.action_size, builder=self._hp.builder))
+
+    def forward(self, image_pairs):
+        embeddings = self.encoder(image_pairs).view(image_pairs.size(0), -1)
+        return self.mlp(embeddings)
+
+
 class QNetwork(torch.nn.Module):
     def __init__(self, hp, distributional=False):
         super().__init__()
