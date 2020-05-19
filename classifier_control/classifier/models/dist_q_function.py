@@ -7,7 +7,7 @@ import torch.nn as nn
 import torch.nn.functional as F
 
 from classifier_control.classifier.models.base_model import BaseModel
-from classifier_control.classifier.utils.q_network import DistQNetwork, AugDistQNetwork
+from classifier_control.classifier.utils.q_network import QNetwork, AugQNetwork
 
 class DistQFunction(BaseModel):
 
@@ -46,9 +46,7 @@ class DistQFunction(BaseModel):
             'crop_goal_ind': False,
             'num_crops': 2,
             'num_bins': 10,
-            'rademacher_actions': False
         })
-
 
         # add new params to parent params
         parent_params = super()._default_hparams()
@@ -58,12 +56,12 @@ class DistQFunction(BaseModel):
 
     def build_network(self, build_encoder=True):
         if self._hp.random_crops:
-            q_network_type = AugDistQNetwork
+            q_network_type = AugQNetwork
         else:
-            q_network_type = DistQNetwork
-        self.qnetwork = q_network_type(self._hp)
+            q_network_type = QNetwork
+        self.qnetwork = q_network_type(self._hp, distributional=True)
         with torch.no_grad():
-            self.target_qnetwork = q_network_type(self._hp)
+            self.target_qnetwork = q_network_type(self._hp, distributional=True)
 
     def forward(self, inputs):
         """
