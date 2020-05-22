@@ -128,8 +128,9 @@ class FixLenVideoDataset(BaseVideoDataset):
                 if name in ['states', 'actions', 'pad_mask']:
                     data_dict[name] = F[key + '/' + name].value.astype(np.float32)
             try:
-                extra_obs = self.get_extra_obs(traj_ind)
-                data_dict['gripper'] = extra_obs['gripper'].astype(np.float32)
+                pass
+                #extra_obs = self.get_extra_obs(traj_ind)
+                #data_dict['gripper'] = extra_obs['gripper'].astype(np.float32)
             except:
                 pass
 

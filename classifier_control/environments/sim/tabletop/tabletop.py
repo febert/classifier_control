@@ -137,6 +137,7 @@ class Tabletop(BaseMujocoEnv, SawyerXYZEnv):
 
     def step(self, action):
         self.set_xyz_action(action[:3])
+        #for i in range(100):
         self.do_simulation([action[-1], -action[-1]])
         obs = self._get_obs()
         return obs
@@ -177,7 +178,8 @@ class Tabletop(BaseMujocoEnv, SawyerXYZEnv):
     def goal_reached(self):
         og_pos = self._obs_history[0]['qpos']
         object_dists = self.compute_object_dists(og_pos[9:], self.sim.data.qpos.flat[9:])
-        return max(object_dists) > 0.15
+        #print('max dist', max(object_dists))
+        return max(object_dists) > 0.075
 
     def _get_obs(self):
         obs = {}

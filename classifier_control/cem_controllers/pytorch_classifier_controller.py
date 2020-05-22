@@ -111,15 +111,15 @@ class LearnedCostController(CEMBaseController):
         return parent_params
 
     @staticmethod
-    def kendall_tau(scores_1, scores_2, num_pairs_ret=10):
+    def kendall_tau(scores_1, true_scores, num_pairs_ret=10):
         """
         Given two np arrays of scores for the same trajectories, return the normalized Kendall tau score
         (disagreement) between them
         """
-        assert len(scores_1) == len(scores_2)
+        assert len(scores_1) == len(true_scores)
         ## Double argsort gives rankings
         total = len(scores_1)
-        ranks_1, ranks_2 = scores_1.argsort().argsort(), scores_2.argsort().argsort()
+        ranks_1, ranks_2 = scores_1.argsort().argsort(), true_scores.argsort().argsort()
         disagree = 0
         ret = [] #indices to return
         for i in range(total):
@@ -128,7 +128,11 @@ class LearnedCostController(CEMBaseController):
                    (ranks_1[i] > ranks_1[j] and ranks_2[i] < ranks_2[j]):
                     disagree += 1
                     if len(ret) < num_pairs_ret:
-                        ret.append((i, j))
+                        # Return better trajectory by true ranking first
+                        if ranks_2[i] < ranks_2[j]:
+                            ret.append((i, j))
+                        else:
+                            ret.append((j, i))
         num_pairs = total * (total + 1) / 2.0
         return 1.0 * disagree / num_pairs, ret
 
@@ -136,6 +140,7 @@ class LearnedCostController(CEMBaseController):
         previous_actions = np.concatenate([x[None] for x in self._sampler.chosen_actions[-self._net_context:]], axis=0)
         previous_actions = np.tile(previous_actions, [actions.shape[0], 1, 1])
         # input_actions = np.concatenate((previous_actions, actions), axis=1)[:, :self.predictor.sequence_length]
+        goal_state_rep = torch.FloatTensor(self._goal_state).cuda()[None].repeat(actions.shape[0], 1)
 
         resampled_imgs = resample_imgs(self._images, self.img_sz)
         last_frames, last_states = get_context(self._net_context, self._t,
@@ -155,8 +160,8 @@ class LearnedCostController(CEMBaseController):
         for tpred in range(gen_images.shape[1]):
             input_images = ten2pytrch(gen_images[:, tpred], self.device)
             inp_dict = {'current_img': input_images,
-                        'current_state': gen_states[:, tpred],
-                        'goal_state': self._goal_obj_pos,
+                        'current_state': torch.FloatTensor(gen_states[:, tpred]).cuda(),
+                        'goal_state': goal_state_rep,
                         'goal_img': uint2pytorch(resample_imgs(self._goal_image, self.img_sz), gen_images.shape[0], self.device)}
             print('peform prediction for ', tpred)
 
@@ -202,10 +207,10 @@ class LearnedCostController(CEMBaseController):
 
             # render disagreeing trajs
             for c in range(self._n_cam):
-                for i in range(2):
+                for i, row_name in enumerate(['gt_better', 'learned_better']):
                     verbose_images = [(gen_images[g_i[i], :] * 255).astype(np.uint8) for g_i in disagree_inds]
                     verbose_images = [resample_imgs(traj, self._goal_image.shape).squeeze() for traj in verbose_images]
-                    row_name = 'cam_{}_disagree_pairs_row{}'.format(c, i)
+                    row_name = 'cam_{}_{}'.format(c, row_name)
                     content_dict[row_name] = save_gifs_direct(verbose_folder,
                                                               row_name, verbose_images)
 
@@ -232,17 +237,18 @@ class LearnedCostController(CEMBaseController):
         return scores
 
 
-    def act(self, t=None, i_tr=None, images=None, goal_image=None, verbose_worker=None, state=None, policy_out=None, goal_obj_pose=None):
+    def act(self, t=None, i_tr=None, images=None, goal_image=None, verbose_worker=None, state=None, policy_out=None, goal_obj_pose=None, goal_state=None):
         self._images = images
         self._verbose_worker = verbose_worker
         self._goal_obj_pos = goal_obj_pose
+        self._goal_state = goal_state
         if self.agentparams['T'] - t < self.predictor.horizon:
             self.last_plan = True
         else:
             self.last_plan = False
 
         ### TEMP: CHEATING
-        self._oracle_actions = np.concatenate([[x['actions'] for x in policy_out], [np.zeros(4)]*20], axis=0)
+        #self._oracle_actions = np.concatenate([[x['actions'] for x in policy_out], [np.zeros(4)]*20], axis=0)
 
         ### Support for getting goal images from environment
         if goal_image.shape[0] == 1:

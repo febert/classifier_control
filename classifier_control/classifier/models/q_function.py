@@ -41,9 +41,11 @@ class QFunction(BaseModel):
             'update_target_rate': 1,
             'double_q': False,
             'action_range': [-1.0, 1.0],
+            'action_stds': [0.6, 0.6, 0.3, 0.3],
             'random_crops': False,
             'crop_goal_ind': False,
             'num_crops': 2,
+            'est_max_samples': 100,
             'rademacher_actions': False
         })
 
@@ -91,7 +93,10 @@ class QFunction(BaseModel):
         else:
             qs = []
             if self._hp.low_dim:
-                image_pairs = torch.cat([inputs["current_state"], inputs['goal_img']], dim=1)
+                #inputs['current_state'] = self.get_arm_state(inputs['current_state'])
+                #inputs['goal_state'] = self.get_arm_state(inputs['goal_state'])
+
+                image_pairs = torch.cat([inputs["current_state"], inputs['goal_state']], dim=1)
             else:
                 image_pairs = torch.cat([inputs["current_img"], inputs["goal_img"]], dim=1)
 
@@ -101,16 +106,24 @@ class QFunction(BaseModel):
 
             with torch.no_grad():
                 for ns in range(100):
-                    actions = torch.FloatTensor(image_pairs.size(0), self._hp.action_size).uniform_(-1, 1).cuda()
+                    #actions = (torch.FloatTensor(image_pairs.size(0), self._hp.action_size).normal_() * np.array(self._hp.action_stds, dtype='float32')).cuda()
+                    actions = torch.FloatTensor(image_pairs.size(0), self._hp.action_size).uniform_(
+                        *self._hp.action_range).cuda()
                     targetq = self.target_qnetwork(image_pairs, actions).detach()
                     qs.append(targetq)
             qs = torch.stack(qs)
             qval = torch.max(qs, 0)[0].squeeze()
             qval = qval.detach().cpu().numpy()
         return qval
-    
+
+    def get_arm_state(self, states):
+        if len(states.shape) == 2:
+            return torch.cat((states[:, :9], states[:, 15:24]), axis=1)
+        return torch.cat((states[:, :, :9], states[:, :, 15:24]), axis=2)
+
     def sample_image_triplet_actions(self, images, actions, tlen, tdist, states):
 
+        #states = self.get_arm_state(states)
         states = states[:, :, :self._hp.state_size]
 
         # get positives:
@@ -170,14 +183,31 @@ class QFunction(BaseModel):
             image_pairs = self.images[:, self._hp.state_size:]
         else:
             image_pairs = self.images[:, 3:]
-            
-        qs = []
-        with torch.no_grad():
-            for ns in range(100):
-                actions = torch.FloatTensor(model_output.size(0), self._hp.action_size).uniform_(-1, 1).cuda()
-                targetq = self.target_qnetwork(image_pairs, actions).detach()
-                qs.append(targetq)
-        qs = torch.stack(qs)
+
+        if self._hp.low_dim:
+            image_pairs_rep = image_pairs[None].repeat(self._hp.est_max_samples, 1,  1)  # [num_samp, B, s_dim]
+            image_pairs_rep = image_pairs_rep.view(
+                *[self._hp.est_max_samples * model_output.size(0)] + list(image_pairs_rep.shape[2:]))
+        else:
+            image_pairs_rep = image_pairs[None].repeat(self._hp.est_max_samples, 1, 1, 1, 1)  # [num_samp, B, C, H, W]
+            image_pairs_rep = image_pairs_rep.view(
+                *[self._hp.est_max_samples * model_output.size(0)] + list(image_pairs_rep.shape[2:]))
+
+        #actions = ((torch.FloatTensor(self._hp.est_max_samples * model_output.size(0), self._hp.action_size).normal_()) * np.array(self._hp.action_stds, dtype='float32')).cuda()
+        actions = torch.FloatTensor(self._hp.est_max_samples * model_output.size(0), self._hp.action_size).uniform_(
+            *self._hp.action_range).cuda()
+
+        targetq = self.target_qnetwork(image_pairs_rep, actions).detach()
+        qs = targetq.view(self._hp.est_max_samples, model_output.size(0), -1)
+
+        #qs = []
+        #with torch.no_grad():
+        #    for ns in range(100):
+        #        actions = torch.FloatTensor(model_output.size(0), self._hp.action_size).uniform_(-1, 1).cuda()
+        #        targetq = self.target_qnetwork(image_pairs, actions).detach()
+        #        qs.append(targetq)
+        #qs = torch.stack(qs)
+
         lb = self.labels.to(self._hp.device)
         
         losses = AttrDict()

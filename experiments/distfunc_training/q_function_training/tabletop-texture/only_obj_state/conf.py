@@ -27,5 +27,6 @@ model_config = {
     'low_dim':True,
     'gamma':0.8,
     'action_size': 4,
+    'state_size': 6,
     #'terminal': True,
 }

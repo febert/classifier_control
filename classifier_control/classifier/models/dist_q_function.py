@@ -179,7 +179,7 @@ class DistQFunction(BaseModel):
 
     def loss(self, model_output):
         if self._hp.low_dim:
-            image_pairs = self.images[:, 2:]
+            image_pairs = self.images[:, self._hp.state_size:]
         else:
             image_pairs = self.images[:, 3:]
         ## Get max_a Q (s_t+1) (Is a min since lower is better)

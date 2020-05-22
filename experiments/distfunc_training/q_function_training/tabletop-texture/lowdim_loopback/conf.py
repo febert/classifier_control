@@ -11,7 +11,7 @@ configuration = {
     'model': QFunction,
     'model_test': QFunctionTestTime,
     'logger': TdistClassifierLogger,
-    'data_dir': os.environ['VMPC_DATA'] + '/classifier_control/data_collection/sim/tabletop-texture',
+    'data_dir': os.environ['VMPC_DATA'] + '/classifier_control/data_collection/sim/tabletop-texture-loopback',
     'batch_size' : 32,
     'num_epochs': 1000,
 }
