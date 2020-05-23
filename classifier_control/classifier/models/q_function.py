@@ -46,7 +46,8 @@ class QFunction(BaseModel):
             'crop_goal_ind': False,
             'num_crops': 2,
             'est_max_samples': 100,
-            'rademacher_actions': False
+            'fs_goal_prop': 0,
+            'rademacher_actions': False,
         })
 
         # add new params to parent params
@@ -148,7 +149,11 @@ class QFunction(BaseModel):
         # get negatives:
         t0 = np.random.randint(0, tlen - tdist - 1, self._hp.batch_size)
         t1 = t0 + 1
-        tg = [np.random.randint(t0[b] + tdist + 1, tlen, 1) for b in range(self._hp.batch_size)]
+        num_fs_goal = int(self._hp.fs_goal_prop * self._hp.batch_size)
+        bitmask = np.array([0] * num_fs_goal + [1] * (self._hp.batch_size-num_fs_goal))
+
+        # 1 in bitmask means we will use an intermediate state as goal, 0 means use the final state of the trajectory
+        tg = [np.random.randint(t0[b] + tdist + 1, tlen, 1) if bitmask[b] else tlen-1 for b in range(self._hp.batch_size)]
         tg = np.array(tg).squeeze()
         t0, t1, tg = torch.from_numpy(t0), torch.from_numpy(t1), torch.from_numpy(tg)
 
