@@ -75,10 +75,19 @@ class QFunction(BaseModel):
         #### Train vs Test
         if "demo_seq_images" in inputs.keys():
             tlen = inputs.demo_seq_images.shape[1]
-            pos_pairs, neg_pairs, pos_act, neg_act = self.sample_image_triplet_actions(inputs.demo_seq_images,
-                                                                                       inputs.actions, tlen, 1,
-                                                                                       inputs.states)
-            self.images = torch.cat([pos_pairs, neg_pairs], dim=0)
+
+            if self._hp.true_negatives:
+                pos_pairs, neg_pairs, true_neg_pairs, pos_act, neg_act, tn_act = self.sample_image_triplet_actions(inputs.demo_seq_images,
+                                                                                           inputs.actions, tlen, 1,
+                                                                                           inputs.states)
+                self.images = torch.cat([pos_pairs, neg_pairs, true_neg_pairs], dim=0)
+            else:
+                pos_pairs, neg_pairs, pos_act, neg_act = self.sample_image_triplet_actions(inputs.demo_seq_images,
+                                                                                           inputs.actions, tlen, 1,
+                                                                                           inputs.states)
+                self.images = torch.cat([pos_pairs, neg_pairs], dim=0)
+
+
             if self._hp.low_dim:
                 image_0 = self.images[:, :self._hp.state_size]
                 image_g = self.images[:, 2 * self._hp.state_size:]
@@ -87,7 +96,10 @@ class QFunction(BaseModel):
                 image_g = self.images[:, 6:]
 
             image_pairs = torch.cat([image_0, image_g], dim=1)
-            acts = torch.cat([pos_act, neg_act], dim=0)
+            if self._hp.true_negatives:
+                acts = torch.cat([pos_act, neg_act, tn_act], dim=0)
+            else:
+                acts = torch.cat([pos_act, neg_act], dim=0)
             self.acts = acts
 
             qval = self.qnetwork(image_pairs, acts)
@@ -176,12 +188,40 @@ class QFunction(BaseModel):
         else:
             self.neg_pair_cat = torch.cat([im_t0, im_t1, im_tg], dim=1)
 
+        if self._hp.true_negatives:
+            t0 = np.random.randint(0, tlen - tdist - 1, self._hp.batch_size)
+            t1 = t0 + 1
+            # 1 in bitmask means we will use an intermediate state as goal, 0 means use the final state of the trajectory
+            tg = [np.random.randint(t0[b] + tdist + 1, tlen, 1) for b in range(self._hp.batch_size)]
+            tg = np.array(tg).squeeze()
+            t0, t1, tg = torch.from_numpy(t0), torch.from_numpy(t1), torch.from_numpy(tg)
+
+            im_t0 = select_indices(images, t0)
+            im_t1 = select_indices(images, t1)
+            im_tg = select_indices(images, tg, batch_offset=1)
+            s_t0 = select_indices(states, t0)
+            s_t1 = select_indices(states, t1)
+            s_tg = select_indices(states, tg, batch_offset=1)
+            true_neg_act = select_indices(actions, t0)
+            self.true_neg_pair = torch.stack([im_t0, im_tg], dim=1)
+            if self._hp.low_dim:
+                self.true_neg_pair_cat = torch.cat([s_t0, s_t1, s_tg], dim=1)
+            else:
+                self.true_neg_pair_cat = torch.cat([im_t0, im_t1, im_tg], dim=1)
+
         # one means within range of tdist range,  zero means outside of tdist range
         #neg_labels = torch.where(torch.norm(s_t1-s_tg, dim=1) < 0.05, torch.ones(self._hp.batch_size).cuda(), torch.zeros(self._hp.batch_size).cuda()).cuda()
         #self.labels = torch.cat([torch.ones(self._hp.batch_size).cuda(), neg_labels])
-        self.labels = torch.cat([torch.ones(self._hp.batch_size), torch.zeros(self._hp.batch_size)])
+        if self._hp.true_negatives:
+            self.labels = torch.cat([torch.ones(self._hp.batch_size), torch.zeros(2*self._hp.batch_size)])
+            self.true_neg_lab = torch.cat([torch.zeros(2*self._hp.batch_size), torch.ones(self._hp.batch_size)])
+        else:
+            self.labels = torch.cat([torch.ones(self._hp.batch_size), torch.zeros(self._hp.batch_size)])
 
-        return self.pos_pair_cat, self.neg_pair_cat, pos_act, neg_act
+        if self._hp.true_negatives:
+            return self.pos_pair_cat, self.neg_pair_cat, self.true_neg_pair_cat, pos_act, neg_act, true_neg_act
+        else:
+            return self.pos_pair_cat, self.neg_pair_cat, pos_act, neg_act
 
     def loss(self, model_output):
         if self._hp.low_dim:
@@ -214,12 +254,16 @@ class QFunction(BaseModel):
         #qs = torch.stack(qs)
 
         lb = self.labels.to(self._hp.device)
+        tn_lb = self.true_neg_lab.to(self._hp.device)
         
         losses = AttrDict()
         if self._hp.terminal:
-            target = lb + self._hp.gamma * torch.max(qs, 0)[0].squeeze() * (1-lb) #terminal value
+            target = (lb + self._hp.gamma * torch.max(qs, 0)[0].squeeze() * (1-lb)) #terminal value
         else:
             target = lb + self._hp.gamma * torch.max(qs, 0)[0].squeeze()
+        if self._hp.true_negatives:
+            target *= (1-tn_lb)
+
         losses.total_loss = F.mse_loss(target, model_output.squeeze())
         self.target_qnetwork.load_state_dict(self.qnetwork.state_dict())
         return losses
@@ -254,7 +298,13 @@ class QFunction(BaseModel):
 #         qvals /= qvals.max()
         
         if log_images:
-            self._logger.log_single_tdist_classifier_image(self.pos_pair, self.neg_pair, model_output.squeeze(),
+            if self._hp.true_negatives:
+
+                self._logger.log_single_tdist_classifier_image(self.pos_pair, self.neg_pair, model_output.squeeze()[:self._hp.batch_size*2],
+                                                               'tdist{}'.format("Q"), step, phase)
+                self._logger.log_one_ex(self.true_neg_pair, model_output.squeeze()[-self._hp.batch_size:].data.cpu().numpy(), 'tdist{}'.format("Q"), step, phase, 'true_negatives')
+            else:
+                self._logger.log_single_tdist_classifier_image(self.pos_pair, self.neg_pair, model_output.squeeze(),
                                                           'tdist{}'.format("Q"), step, phase)
 #             self._logger.log_heatmap_image(self.pos_pair, qvals, model_output.squeeze(),
 #                                                           'tdist{}'.format("Q"), step, phase)

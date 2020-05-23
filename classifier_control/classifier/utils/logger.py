@@ -105,17 +105,11 @@ def get_text_row(pred_scores, _n_logged_samples, shape=(30, 64)):
     return np.concatenate(text_images, 2)
 
 
-
 class TdistClassifierLogger(Logger):
-    def log_single_tdist_classifier_image(self, pos_pair, neg_pair, out_sigmoid,
-                                                  name, step, phase):
+    def log_one_ex(self, pair, out_sigmoid, name, step, phase, tag):
 
-        pos_pair = pos_pair.data.cpu().numpy().squeeze()
-        neg_pair = neg_pair.data.cpu().numpy().squeeze()
-
-        pos_pred = out_sigmoid[:out_sigmoid.shape[0]//2].data.cpu().numpy()
-        neg_pred = out_sigmoid[out_sigmoid.shape[0]//2:].data.cpu().numpy()
-
+        pair = pair.data.cpu().numpy().squeeze()
+        pred = out_sigmoid
 
         def image_row(image_pairs, scores, _n_logged_samples):
 
@@ -131,13 +125,16 @@ class TdistClassifierLogger(Logger):
 
             return (np.concatenate([first_row, second_row, numbers], 1) + 1.)/2.0
 
-        positives_image = image_row(pos_pair, pos_pred, self._n_logged_samples)
+        image = image_row(pair, pred, self._n_logged_samples)
         # import pdb; pdb.set_trace()
-        self._summ_writer.add_image('{}_{}'.format(name + '_positives', phase), positives_image, step)
+        self._summ_writer.add_image('{}_{}_{}'.format(name, tag, phase), image, step)
 
-        positives_image = image_row(neg_pair, neg_pred, self._n_logged_samples)
-        self._summ_writer.add_image('{}_{}'.format(name + '_negatives', phase), positives_image, step)
-        
+    def log_single_tdist_classifier_image(self, pos_pair, neg_pair, out_sigmoid,
+                                                  name, step, phase):
+
+        self.log_one_ex(pos_pair, out_sigmoid[:out_sigmoid.shape[0]//2].data.cpu().numpy(), name, step, phase, 'positives')
+        self.log_one_ex(neg_pair, out_sigmoid[out_sigmoid.shape[0]//2:].data.cpu().numpy(), name, step, phase, 'negatives')
+
     def log_heatmap_image(self, pos_pair, heatmap, out_sigmoid,
                                                   name, step, phase):
 
