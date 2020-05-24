@@ -108,9 +108,10 @@ class GroundTruthDistController(CEMBaseController):
 
     @staticmethod
     def gt_cost(inp_dict):
+        goal = inp_dict['goal_state']
         states = inp_dict['current_state'][:, 9:15]
-        if inp_dict['goal_state'].shape[1] > 6:
-            goal = inp_dict['goal_state'][:, 9:15]
+        if inp_dict['goal_state'].shape[-1] > 6:
+            goal = inp_dict['goal_state'][..., 9:15]
         if isinstance(states, torch.Tensor):
             states = states.cpu().numpy()
         if isinstance(goal, torch.Tensor):

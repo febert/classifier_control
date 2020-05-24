@@ -46,12 +46,12 @@ class QFunction(BaseModel):
             'crop_goal_ind': False,
             'num_crops': 2,
             'est_max_samples': 100,
-            'fs_goal_prop': 0,
+            'fs_goal_prop': 0.0,
             'rademacher_actions': False,
             'min_q': False,
             'min_q_weight': 1.0,
+            'true_negatives': False,
         })
-
         # add new params to parent params
         parent_params = super()._default_hparams()
         for k in default_dict.keys():
@@ -108,8 +108,9 @@ class QFunction(BaseModel):
         else:
             qs = []
             if self._hp.low_dim:
-                #inputs['current_state'] = self.get_arm_state(inputs['current_state'])
-                #inputs['goal_state'] = self.get_arm_state(inputs['goal_state'])
+                if self._hp.state_size == 18:
+                    inputs['current_state'] = self.get_arm_state(inputs['current_state'])
+                    inputs['goal_state'] = self.get_arm_state(inputs['goal_state'])
 
                 image_pairs = torch.cat([inputs["current_state"], inputs['goal_state']], dim=1)
             else:
@@ -137,9 +138,10 @@ class QFunction(BaseModel):
         return torch.cat((states[:, :, :9], states[:, :, 15:24]), axis=2)
 
     def sample_image_triplet_actions(self, images, actions, tlen, tdist, states):
-
-        #states = self.get_arm_state(states)
-        states = states[:, :, :self._hp.state_size]
+        if self._hp.state_size == 18:
+            states = self.get_arm_state(states)
+        else:
+            states = states[:, :, :self._hp.state_size]
 
         # get positives:
         t0 = np.random.randint(0, tlen - tdist - 1, self._hp.batch_size)
@@ -167,7 +169,7 @@ class QFunction(BaseModel):
         bitmask = np.array([0] * num_fs_goal + [1] * (self._hp.batch_size-num_fs_goal))
 
         # 1 in bitmask means we will use an intermediate state as goal, 0 means use the final state of the trajectory
-        tg = [np.random.randint(t0[b] + tdist + 1, tlen, 1) if bitmask[b] else tlen-1 for b in range(self._hp.batch_size)]
+        tg = [np.random.randint(t0[b] + tdist + 1, tlen, 1).squeeze() if bitmask[b] else tlen-1 for b in range(self._hp.batch_size)]
         tg = np.array(tg).squeeze()
         t0, t1, tg = torch.from_numpy(t0), torch.from_numpy(t1), torch.from_numpy(tg)
 
