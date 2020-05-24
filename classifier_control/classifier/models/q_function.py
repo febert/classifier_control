@@ -48,6 +48,8 @@ class QFunction(BaseModel):
             'est_max_samples': 100,
             'fs_goal_prop': 0,
             'rademacher_actions': False,
+            'min_q': False,
+            'min_q_weight': 1.0,
         })
 
         # add new params to parent params
@@ -264,8 +266,19 @@ class QFunction(BaseModel):
         if self._hp.true_negatives:
             target *= (1-tn_lb)
 
-        losses.total_loss = F.mse_loss(target, model_output.squeeze())
+        if self._hp.min_q:
+            # Implement minq loss
+            random_q_values = self.qnetwork(image_pairs_rep, actions).view(self._hp.est_max_samples, model_output.size(0), -1)
+            random_density = np.log(0.5 ** actions.shape[-1]) # log uniform density
+            random_q_values -= random_density
+            min_q_loss = torch.logsumexp(random_q_values, dim=0).mean()
+            min_q_loss -= model_output.mean()
+            losses.min_q_loss = min_q_loss * self._hp.min_q_weight
+
+        losses.bellman_loss = F.mse_loss(target, model_output.squeeze())
+        losses.total_loss = torch.stack(list(losses.values())).sum()
         self.target_qnetwork.load_state_dict(self.qnetwork.state_dict())
+
         return losses
     
     def _log_outputs(self, model_output, inputs, losses, step, log_images, phase):
