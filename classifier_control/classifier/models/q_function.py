@@ -258,14 +258,15 @@ class QFunction(BaseModel):
         #qs = torch.stack(qs)
 
         lb = self.labels.to(self._hp.device)
-        tn_lb = self.true_neg_lab.to(self._hp.device)
-        
+
         losses = AttrDict()
         if self._hp.terminal:
             target = (lb + self._hp.gamma * torch.max(qs, 0)[0].squeeze() * (1-lb)) #terminal value
         else:
             target = lb + self._hp.gamma * torch.max(qs, 0)[0].squeeze()
+
         if self._hp.true_negatives:
+            tn_lb = self.true_neg_lab.to(self._hp.device)
             target *= (1-tn_lb)
 
         if self._hp.min_q:
