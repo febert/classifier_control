@@ -51,6 +51,7 @@ class QFunction(BaseModel):
             'min_q': False,
             'min_q_weight': 1.0,
             'true_negatives': False,
+            'l2_rew': False,
         })
         # add new params to parent params
         parent_params = super()._default_hparams()
@@ -136,6 +137,13 @@ class QFunction(BaseModel):
         if len(states.shape) == 2:
             return torch.cat((states[:, :9], states[:, 15:24]), axis=1)
         return torch.cat((states[:, :, :9], states[:, :, 15:24]), axis=2)
+
+    def compute_reward(self, image_pairs):
+        start_im = image_pairs[:, :self._hp.state_size]
+        goal_im = image_pairs[:, self._hp.state_size:]
+        start_arm, goal_arm = self.get_arm_state(start_im), self.get_arm_state(goal_im)
+        return -np.linalg.norm(start_arm-goal_arm)
+
 
     def sample_image_triplet_actions(self, images, actions, tlen, tdist, states):
         if self._hp.state_size == 18:
@@ -259,11 +267,17 @@ class QFunction(BaseModel):
 
         lb = self.labels.to(self._hp.device)
 
-        losses = AttrDict()
-        if self._hp.terminal:
-            target = (lb + self._hp.gamma * torch.max(qs, 0)[0].squeeze() * (1-lb)) #terminal value
+        if self._hp.l2_rew:
+            rew = self.compute_reward(image_pairs)
         else:
-            target = lb + self._hp.gamma * torch.max(qs, 0)[0].squeeze()
+            rew = lb
+
+        losses = AttrDict()
+
+        if self._hp.terminal:
+            target = (rew + self._hp.gamma * torch.max(qs, 0)[0].squeeze() * (1-lb)) #terminal value
+        else:
+            target = rew + self._hp.gamma * torch.max(qs, 0)[0].squeeze()
 
         if self._hp.true_negatives:
             tn_lb = self.true_neg_lab.to(self._hp.device)
