@@ -79,7 +79,7 @@ class QNetwork(torch.nn.Module):
         if self._hp.low_dim:
             embeddings = image_pairs
         else:
-            embeddings = self.encoder(image_pairs).view(image_pairs.size(0), -1)
+            embeddings = self.encoder(image_pairs).reshape(image_pairs.size(0), -1)
 
         e = F.relu(self.linear1(embeddings))
         if self._hp.film:

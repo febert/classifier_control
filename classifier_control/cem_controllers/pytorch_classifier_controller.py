@@ -122,8 +122,9 @@ class LearnedCostController(CEMBaseController):
         ranks_1, ranks_2 = scores_1.argsort().argsort(), true_scores.argsort().argsort()
         disagree = 0
         ret = [] #indices to return
-        for i in true_scores.argsort(): # Go through the indices based on how good they actually are
-            for j in range(0, total):
+        true_score_ordering = true_scores.argsort()
+        for number, i in enumerate(true_score_ordering): # Go through the indices based on how good they actually are
+            for j in true_score_ordering[number:]:
                 if i == j:
                     continue
                 if (ranks_1[i] < ranks_1[j] and ranks_2[i] > ranks_2[j]) or\
