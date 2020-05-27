@@ -54,7 +54,9 @@ class QFunction(BaseModel):
             'l2_rew': False,
             'object_rew': False,
             'not_goal_cond': False,
+            'shifted_rew': False,
         })
+
         # add new params to parent params
         parent_params = super()._default_hparams()
         for k in default_dict.keys():
@@ -291,7 +293,10 @@ class QFunction(BaseModel):
         if self._hp.l2_rew:
             rew = self.compute_reward(image_pairs) / 20.0
         else:
-            rew = lb
+            if self._hp.shifted_rew:
+                rew = lb - 1.0
+            else:
+                rew = lb
 
         losses = AttrDict()
 
@@ -405,7 +410,7 @@ class QFunctionTestTime(QFunction):
     def forward(self, inputs):
         qvals = super().forward(inputs)
         # Compute the log to get the units to be in timesteps
-        if self._hp.l2_rew:
+        if self._hp.l2_rew or self._hp.shifted_rews:
             return -qvals
         timesteps = np.log(np.clip(qvals, 1e-5, 1)) / np.log(self._hp.gamma)
         return timesteps + 1
