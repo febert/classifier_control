@@ -52,7 +52,7 @@ class QFunction(BaseModel):
             'min_q_weight': 1.0,
             'true_negatives': False,
             'l2_rew': False,
-            'object_rew': False,
+            'object_rew_frac': 0.0,
             'not_goal_cond': False,
         })
         # add new params to parent params
@@ -142,28 +142,32 @@ class QFunction(BaseModel):
         return qval
 
     def get_arm_state(self, states):
+        assert states.shape[-1] > 18, 'State must be full vector to get arm subset'
         if len(states.shape) == 2:
             return torch.cat((states[:, :9], states[:, 15:24]), axis=1)
         return torch.cat((states[:, :, :9], states[:, :, 15:24]), axis=2)
 
     def compute_reward(self, image_pairs):
-        if self._hp.object_rew:
+        start_im = image_pairs[:, :self._hp.state_size]
+        goal_im = image_pairs[:, self._hp.state_size:]
+        object_rew = 0
+        if self._hp.object_rew_frac > 0:
             assert self._hp.state_size > 18, 'State must include object state to use this reward!'
-            start_im = image_pairs[:, :self._hp.state_size][:, 9:15]
-            goal_im = image_pairs[:, self._hp.state_size:][:, 9:15]
+            start_obj_pos, goal_obj_pos = start_im[:, 9:15], goal_im[:, 9:15]
             if self._hp.not_goal_cond:
-                goal_im = torch.FloatTensor([0.2, 0.8] * 3).cuda()
-            return -torch.norm(start_im - goal_im, dim=1)
-        else:
-            start_im = image_pairs[:, :self._hp.state_size]
-            goal_im = image_pairs[:, self._hp.state_size:]
-            if self._hp.not_goal_cond:
-                goal_im = torch.FloatTensor([1.6693e+00, -4.9677e-01, -6.9320e-01,  1.6383e+00,  9.2470e-01,
-             7.7113e-01,  2.2918e+00, -9.8849e-04,  1.4676e-05, -3.8879e+00,
-             5.4454e-02,  1.7412e+00, -4.1425e+00, -4.0342e+00,  1.0425e+00,
-             2.2351e+00, -2.7262e-02,  3.0603e-04]).cuda()
-            return -torch.norm((start_im-goal_im)[:, :9], dim=1)
+                goal_obj_pos = torch.FloatTensor([0.2, 0.8] * 3).cuda()
+            object_rew = -torch.norm((start_obj_pos - goal_obj_pos)[:, 9:15], dim=1)
 
+        start_im, goal_im = self.get_arm_state(start_im), self.get_arm_state(goal_im)
+        if self._hp.not_goal_cond:
+            goal_im = torch.FloatTensor([1.6693e+00, -4.9677e-01, -6.9320e-01,  1.6383e+00,  9.2470e-01,
+         7.7113e-01,  2.2918e+00, -9.8849e-04,  1.4676e-05, -3.8879e+00,
+         5.4454e-02,  1.7412e+00, -4.1425e+00, -4.0342e+00,  1.0425e+00,
+         2.2351e+00, -2.7262e-02,  3.0603e-04]).cuda()
+
+        arm_rew = -torch.norm((start_im-goal_im)[:, :9], dim=1)
+
+        return self._hp.object_rew_frac * object_rew + (1-self._hp.object_rew_frac) * arm_rew
 
     def sample_image_triplet_actions(self, images, actions, tlen, tdist, states):
 
