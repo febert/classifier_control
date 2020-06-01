@@ -16,10 +16,13 @@ class QFunction(BaseModel):
 
         assert self._hp.batch_size != -1   # make sure that batch size was overridden
 
-        self.tdist_classifiers = []
         self.build_network()
         self._use_pred_length = False
-        
+        self.target_network_counter = 0
+
+    @property
+    def num_network_outputs(self):
+        return 1
 
     def _default_hparams(self):
         default_dict = AttrDict({
@@ -54,7 +57,13 @@ class QFunction(BaseModel):
             'l2_rew': False,
             'object_rew_frac': 0.0,
             'not_goal_cond': False,
-            'shifted_rew': False,
+            'shifted_rew': False, # Use -1 0 reward
+            'object_rew': False,
+            'add_image_mse_rew': False,
+            'sum_reward': False,
+            'zero_tn_target': True,
+            'cross_traj_consistency': False,
+            'close_arm_negatives': False,
         })
 
         # add new params to parent params
@@ -68,9 +77,19 @@ class QFunction(BaseModel):
             q_network_type = AugQNetwork
         else:
             q_network_type = QNetwork
-        self.qnetwork = q_network_type(self._hp)
+        self.qnetwork = q_network_type(self._hp, self.num_network_outputs)
         with torch.no_grad():
-            self.target_qnetwork = q_network_type(self._hp)
+            self.target_qnetwork = q_network_type(self._hp, self.num_network_outputs)
+
+    def network_out_2_qval(self, network_outputs):
+        """
+        :param softmax_values: Tensor of softmax values of dimension [..., num_bins]
+        :return: Tensor of dimension [...] containing scalar q values.
+        """
+        return network_outputs.squeeze()
+
+    def get_max_q(self, qvals):
+        return qvals.max(dim=0)
 
     def forward(self, inputs):
         """
@@ -111,11 +130,10 @@ class QFunction(BaseModel):
                 acts = torch.cat([pos_act, neg_act], dim=0)
             self.acts = acts
 
-                      
-            qval = self.qnetwork(image_pairs, acts)
+            self.network_out = self.qnetwork(image_pairs, acts)
+            qval = self.network_out_2_qval(self.network_out)
 
         else:
-            qs = []
             if self._hp.low_dim:
                 if self._hp.state_size == 18:
                     inputs['current_state'] = self.get_arm_state(inputs['current_state'])
@@ -130,18 +148,38 @@ class QFunction(BaseModel):
                 qs = self.qnetwork(image_pairs, inputs['actions'])
                 return qs.detach().cpu().numpy()
 
-            with torch.no_grad():
-                for ns in range(100):
-                    #actions = (torch.FloatTensor(image_pairs.size(0), self._hp.action_size).normal_() * np.array(self._hp.action_stds, dtype='float32')).cuda()
-                    actions = torch.FloatTensor(image_pairs.size(0), self._hp.action_size).uniform_(
-                        *self._hp.action_range).cuda()
-                    targetq = self.target_qnetwork(image_pairs, actions).detach()
-                    qs.append(targetq)
-            #import ipdb; ipdb.set_trace()
-            qs = torch.stack(qs)
-            qval = torch.max(qs, 0)[0].squeeze()
+            qs = compute_action_samples(self.target_qnetwork, parallel=False)
+            qval = self.get_max_q(self.network_out_2_qval(qs))[0]
             qval = qval.detach().cpu().numpy()
+
         return qval
+
+    def compute_action_samples(self, image_pairs, network, parallel=True, return_actions=False):
+        if not parallel:
+            qs = []
+            actions = []
+            with torch.no_grad():
+                for _ in range(self._hp.est_max_samples):
+                    # actions = (torch.FloatTensor(image_pairs.size(0), self._hp.action_size).normal_() * np.array(self._hp.action_stds, dtype='float32')).cuda()
+                    actions = torch.FloatTensor(image_pairs.size(0), self._hp.action_size).uniform_(
+                        *self._hp.action_range).to(self._hp.device)
+                    targetq = network(image_pairs, actions).detach()
+                    qs.append(targetq)
+                    if return_actions:
+                        actions.append(actions)
+            qs = torch.stack(qs)
+            actions = torch.stack(actions)
+        else:
+            actions = torch.FloatTensor(image_pairs.size(0), self._hp.action_size).uniform_(
+                *self._hp.action_range).to(self._hp.device)
+            targetq = network(image_pairs, actions).detach()
+            qs = targetq.view(self._hp.est_max_samples, image_pairs.size(0)//self._hp.est_max_samples, -1)
+
+        if return_actions:
+            actions = actions.view(self._hp.est_max_samples, image_pairs.size(0)//self._hp.est_max_samples, -1)
+            return qs, actions
+        else:
+            return qs
 
     def get_arm_state(self, states):
         assert states.shape[-1] > 18, 'State must be full vector to get arm subset'
@@ -149,7 +187,7 @@ class QFunction(BaseModel):
             return torch.cat((states[:, :9], states[:, 15:24]), axis=1)
         return torch.cat((states[:, :, :9], states[:, :, 15:24]), axis=2)
 
-    def compute_reward(self, image_pairs):
+    def compute_lowdim_reward(self, image_pairs):
         start_im = image_pairs[:, :self._hp.state_size]
         goal_im = image_pairs[:, self._hp.state_size:]
         object_rew = 0
@@ -157,7 +195,7 @@ class QFunction(BaseModel):
             assert self._hp.state_size > 18, 'State must include object state to use this reward!'
             start_obj_pos, goal_obj_pos = start_im[:, 9:15], goal_im[:, 9:15]
             if self._hp.not_goal_cond:
-                goal_obj_pos = torch.FloatTensor([0.2, 0.8] * 3).cuda()
+                goal_obj_pos = torch.FloatTensor([0.2, 0.8] * 3).to(self._hp.device)
             object_rew = -torch.norm((start_obj_pos - goal_obj_pos)[:, 9:15], dim=1)
 
         start_im, goal_im = self.get_arm_state(start_im), self.get_arm_state(goal_im)
@@ -165,11 +203,16 @@ class QFunction(BaseModel):
             goal_im = torch.FloatTensor([1.6693e+00, -4.9677e-01, -6.9320e-01,  1.6383e+00,  9.2470e-01,
          7.7113e-01,  2.2918e+00, -9.8849e-04,  1.4676e-05, -3.8879e+00,
          5.4454e-02,  1.7412e+00, -4.1425e+00, -4.0342e+00,  1.0425e+00,
-         2.2351e+00, -2.7262e-02,  3.0603e-04]).cuda()
+         2.2351e+00, -2.7262e-02,  3.0603e-04]).to(self._hp.device)
 
         arm_rew = -torch.norm((start_im-goal_im)[:, :9], dim=1)
 
         return self._hp.object_rew_frac * object_rew + (1-self._hp.object_rew_frac) * arm_rew
+
+    def mse_reward(self, image_pairs):
+        split_ind = image_pairs.shape[1]//2
+        start_im, goal_im = image_pairs[:, :split_ind], image_pairs[:, split_ind:]
+        return -torch.mean((start_im - goal_im) ** 2)
 
     def sample_image_triplet_actions(self, images, actions, tlen, tdist, states):
 
@@ -226,10 +269,17 @@ class QFunction(BaseModel):
         else:
             self.neg_pair_cat = torch.cat([im_t0, im_t1, im_tg], dim=1)
 
+        if self._hp.cross_traj_consistency:
+            im_tg = select_indices(images, tg, batch_offset=1)
+            s_tg = select_indices(states, tg, batch_offset=1)
+            if self._hp.low_dim:
+                self.cross_traj_pair_cat = torch.cat([s_t0, s_t1, s_tg], dim=1)
+            else:
+                self.cross_traj_pair_cat = torch.cat([im_t0, im_t1, im_tg], dim=1)
+
         if self._hp.true_negatives:
             t0 = np.random.randint(0, tlen - tdist - 1, self._hp.batch_size)
             t1 = t0 + 1
-            # 1 in bitmask means we will use an intermediate state as goal, 0 means use the final state of the trajectory
             tg = [np.random.randint(t0[b] + tdist + 1, tlen, 1) for b in range(self._hp.batch_size)]
             tg = np.array(tg).squeeze()
             t0, t1, tg = torch.from_numpy(t0), torch.from_numpy(t1), torch.from_numpy(tg)
@@ -239,7 +289,10 @@ class QFunction(BaseModel):
             im_tg = select_indices(images, tg, batch_offset=1)
             s_t0 = select_indices(states, t0)
             s_t1 = select_indices(states, t1)
-            s_tg = select_indices(states, tg, batch_offset=1)
+            if self._hp.close_arm_negatives:
+                s_tg = self.select_close_arm_goals(states, s_t0)
+            else:
+                s_tg = select_indices(states, tg, batch_offset=1)
             true_neg_act = select_indices(actions, t0)
             self.true_neg_pair = torch.stack([im_t0, im_tg], dim=1)
             if self._hp.low_dim:
@@ -262,6 +315,65 @@ class QFunction(BaseModel):
         else:
             return self.pos_pair_cat, self.neg_pair_cat, pos_act, neg_act
 
+    def select_close_arm_goals(self, states, s_t0):
+        # States is [B, T, N]
+        # get arm states
+        arm_states = states[:, :, :9]
+        tsteps = states.shape[1]
+        s_t0 = s_t0[:, :9]
+        out = []
+        for i, state in enumerate(s_t0):
+            distances = torch.norm(arm_states - state, dim=2) #distances is [B, T]
+            distances = torch.cat((distances[:i], distances[i+1:]), dim=0) #remove batch that traj is from
+            distances = distances.view(-1) # flatten into [(B-1)*T]
+            idx = torch.argmin(distances)
+            if idx >= tsteps * i:
+                idx += tsteps
+            out.append(states[idx//tsteps, idx % tsteps])
+        return torch.stack(out, dim=0)
+
+    def get_target_q_samples(self, image_pairs, get_acts=False):
+        image_pairs_rep = image_pairs[None] # Add one dimension
+        repeat_shape = [self._hp.est_max_samples] + [1] * len(image_pairs.shape)
+        image_pairs_rep = image_pairs_rep.repeat(*repeat_shape) # [num_samp, B, s_dim]
+        image_pairs_rep = image_pairs_rep.view(
+            *[self._hp.est_max_samples * image_pairs.shape[0]] + list(image_pairs_rep.shape[2:]))
+        return self.compute_action_samples(image_pairs_rep, self.target_qnetwork, parallel=True, return_actions=get_acts)
+
+    def get_td_error(self, image_pairs, model_output):
+
+        qs = self.get_target_q_samples(image_pairs)
+        max_qs = self.get_max_q(self.network_out_2_qval(qs))
+
+        lb = self.labels.to(self._hp.device)
+        if self._hp.shifted_rew:
+            rew = lb - 1.0
+        else:
+            rew = lb
+
+        if self._hp.l2_rew:
+            assert self._hp.low_dim, 'l2 rew should probably only be used with lowdim states!'
+            l2_rew = self.compute_lowdim_reward(image_pairs) / 20.0
+            if self._hp.sum_reward:
+                rew += l2_rew
+            else:
+                rew = l2_rew
+
+        if self._hp.add_image_mse_rew:
+            image_mse_rew = self.mse_reward(image_pairs)  # This is a _negative_ value
+            rew += image_mse_rew / 5.0
+
+        if self._hp.terminal:
+            target = (rew + self._hp.gamma * max_qs[0] * (1 - lb))  # terminal value
+        else:
+            target = rew + self._hp.gamma * max_qs[0]
+
+        if self._hp.true_negatives and self._hp.zero_tn_target:
+            tn_lb = self.true_neg_lab.to(self._hp.device)
+            target *= (1 - tn_lb)
+
+        return F.mse_loss(target, model_output)
+
     def loss(self, model_output):
 
         if self._hp.low_dim:
@@ -269,49 +381,26 @@ class QFunction(BaseModel):
         else:
             image_pairs = self.images[:, 3:]
 
-        if self._hp.low_dim:
-            image_pairs_rep = image_pairs[None].repeat(self._hp.est_max_samples, 1,  1)  # [num_samp, B, s_dim]
-            image_pairs_rep = image_pairs_rep.view(
-                *[self._hp.est_max_samples * model_output.size(0)] + list(image_pairs_rep.shape[2:]))
-        else:
-            image_pairs_rep = image_pairs[None].repeat(self._hp.est_max_samples, 1, 1, 1, 1)  # [num_samp, B, C, H, W]
-            image_pairs_rep = image_pairs_rep.view(
-                *[self._hp.est_max_samples * model_output.size(0)] + list(image_pairs_rep.shape[2:]))
-
-        #actions = ((torch.FloatTensor(self._hp.est_max_samples * model_output.size(0), self._hp.action_size).normal_()) * np.array(self._hp.action_stds, dtype='float32')).cuda()
-        actions = torch.FloatTensor(self._hp.est_max_samples * model_output.size(0), self._hp.action_size).uniform_(
-            *self._hp.action_range).cuda()
-
-        targetq = self.target_qnetwork(image_pairs_rep, actions).detach()
-        qs = targetq.view(self._hp.est_max_samples, model_output.size(0), -1)
-
-        #qs = []
-        #with torch.no_grad():
-        #    for ns in range(100):
-        #        actions = torch.FloatTensor(model_output.size(0), self._hp.action_size).uniform_(-1, 1).cuda()
-        #        targetq = self.target_qnetwork(image_pairs, actions).detach()
-        #        qs.append(targetq)
-        #qs = torch.stack(qs)
-
-        lb = self.labels.to(self._hp.device)
-        if self._hp.l2_rew:
-            rew = self.compute_reward(image_pairs) / 20.0
-        else:
-            if self._hp.shifted_rew:
-                rew = lb - 1.0
-            else:
-                rew = lb
-
         losses = AttrDict()
 
-        if self._hp.terminal:
-            target = (rew + self._hp.gamma * torch.max(qs, 0)[0].squeeze() * (1-lb)) #terminal value
-        else:
-            target = rew + self._hp.gamma * torch.max(qs, 0)[0].squeeze()
+        if self._hp.cross_traj_consistency:
+            def get_sg_pair(t, x):
+                return torch.cat((t[:, :x], t[:, 2 * x:]), axis=1)
 
-        if self._hp.true_negatives:
-            tn_lb = self.true_neg_lab.to(self._hp.device)
-            target *= (1-tn_lb)
+            if self._hp.low_dim:
+                same_traj_pair = get_sg_pair(self.neg_pair_cat, self._hp.state_size)
+                cross_traj_pair = get_sg_pair(self.cross_traj_pair_cat, self._hp.state_size)
+            else:
+                same_traj_pair = get_sg_pair(self.neg_pair_cat, 3)
+                cross_traj_pair = get_sg_pair(self.cross_traj_pair_cat, 3)
+
+            neg_acts = self.acts[self._hp.batch_size:self._hp.batch_size*2]
+
+            #losses.cross_traj_loss = torch.clamp(self.qnetwork(cross_traj_pair, neg_acts)
+            #                                     - self.qnetwork(same_traj_pair, neg_acts), min=0).mean()
+            ct_pair_q = self.qnetwork(cross_traj_pair, neg_acts)
+            same_q = self.qnetwork(same_traj_pair, neg_acts)
+            losses.cross_traj_loss = 0.005 * (ct_pair_q - same_q).mean()
 
         if self._hp.min_q:
             # Implement minq loss
@@ -323,9 +412,14 @@ class QFunction(BaseModel):
             min_q_loss -= model_output.mean()
             losses.min_q_loss = min_q_loss * self._hp.min_q_weight
 
-        losses.bellman_loss = F.mse_loss(target, model_output.squeeze())
+        losses.bellman_loss = self.get_td_error(image_pairs, model_output)
         losses.total_loss = torch.stack(list(losses.values())).sum()
-        self.target_qnetwork.load_state_dict(self.qnetwork.state_dict())
+
+        """ Target network lagging update """
+        self.target_network_counter = self.target_network_counter + 1
+        if self.target_network_counter % self._hp.update_target_rate == 0:
+            self.target_qnetwork.load_state_dict(self.qnetwork.state_dict())
+            self.target_network_counter = 0
 
         return losses
     
@@ -361,11 +455,11 @@ class QFunction(BaseModel):
         if log_images:
             if self._hp.true_negatives:
 
-                self._logger.log_single_tdist_classifier_image(self.pos_pair, self.neg_pair, model_output.squeeze()[:self._hp.batch_size*2],
+                self._logger.log_single_tdist_classifier_image(self.pos_pair, self.neg_pair, model_output[:self._hp.batch_size*2],
                                                                'tdist{}'.format("Q"), step, phase)
-                self._logger.log_one_ex(self.true_neg_pair, model_output.squeeze()[-self._hp.batch_size:].data.cpu().numpy(), 'tdist{}'.format("Q"), step, phase, 'true_negatives')
+                self._logger.log_one_ex(self.true_neg_pair, model_output[-self._hp.batch_size:].data.cpu().numpy(), 'tdist{}'.format("Q"), step, phase, 'true_negatives')
             else:
-                self._logger.log_single_tdist_classifier_image(self.pos_pair, self.neg_pair, model_output.squeeze(),
+                self._logger.log_single_tdist_classifier_image(self.pos_pair, self.neg_pair, model_output,
                                                           'tdist{}'.format("Q"), step, phase)
 #             self._logger.log_heatmap_image(self.pos_pair, qvals, model_output.squeeze(),
 #                                                           'tdist{}'.format("Q"), step, phase)
@@ -373,7 +467,11 @@ class QFunction(BaseModel):
     def get_device(self):
         return self._hp.device
 
-def fast_select_indices(tensor, indices, batch_offset=0):
+    def qval_to_timestep(self, qvals):
+        return np.log(np.clip(qvals, 1e-5, 1)) / np.log(self._hp.gamma) + 1
+
+
+def select_indices(tensor, indices, batch_offset=0):
     batch_idx = torch.arange(len(indices)).cuda()
     if batch_offset != 0:
         batch_idx = torch.roll(batch_idx, batch_offset)
@@ -381,14 +479,6 @@ def fast_select_indices(tensor, indices, batch_offset=0):
         indices = torch.LongTensor(indices).cuda()
     out = tensor[batch_idx, indices]
     return out
-
-def select_indices(tensor, indices, batch_offset=0):
-    return fast_select_indices(tensor, indices, batch_offset)
-    new_images = []
-    for b in range(tensor.shape[0]):
-        new_images.append(tensor[(b+batch_offset) % tensor.shape[0], indices[b]])
-    tensor = torch.stack(new_images, dim=0)
-    return tensor
 
 
 class QFunctionTestTime(QFunction):
@@ -414,7 +504,7 @@ class QFunctionTestTime(QFunction):
     def forward(self, inputs):
         qvals = super().forward(inputs)
         # Compute the log to get the units to be in timesteps
-        if self._hp.l2_rew or self._hp.shifted_rews:
+        if self._hp.l2_rew or self._hp.shifted_rew:
             return -qvals
-        timesteps = np.log(np.clip(qvals, 1e-5, 1)) / np.log(self._hp.gamma)
-        return timesteps + 1
+        timesteps = self.qval_to_timestep(qvals)
+        return timesteps
