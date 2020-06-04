@@ -75,14 +75,6 @@ class DistQFunction(QFunction):
         return kl_d
 
 
-def select_indices(tensor, indices):
-    new_images = []
-    for b in range(tensor.shape[0]):
-        new_images.append(tensor[b, indices[b]])
-    tensor = torch.stack(new_images, dim=0)
-    return tensor
-
-
 class DistQFunctionTestTime(DistQFunction):
     def __init__(self, overrideparams, logger=None):
         super(DistQFunctionTestTime, self).__init__(overrideparams, logger)
