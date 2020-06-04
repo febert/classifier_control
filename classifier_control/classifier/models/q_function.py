@@ -437,7 +437,7 @@ class QFunction(BaseModel):
             losses.goal_cql_loss = self._hp.goal_cql_weight * (-diags+lse).mean()
 
         if self._hp.sl_loss:
-            sl_targets = torch.pow(self._hp.gamma, self.data_tdists-1)
+            sl_targets = torch.pow(self._hp.gamma, 1.0*(self.data_tdists-1))
             # We won't use the supervised learning loss for the out of trajectory goals
             losses.sl_loss = self._hp.sl_loss_weight * F.mse_loss(model_output[:self._hp.batch_size*2], sl_targets[:self._hp.batch_size*2])
 
