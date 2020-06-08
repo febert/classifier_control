@@ -118,7 +118,6 @@ class QFunction(BaseModel):
                                                                                            inputs.states)
                 self.images = torch.cat([pos_pairs, neg_pairs], dim=0)
 
-            
             if self._hp.low_dim:
                 if self._hp.not_goal_cond:
                     self.images[:, 2*self._hp.state_size:] = 0
@@ -148,8 +147,15 @@ class QFunction(BaseModel):
                 image_pairs = torch.cat([inputs["current_state"], inputs['goal_state']], dim=1)
             else:
                 image_pairs = torch.cat([inputs["current_img"], inputs["goal_img"]], dim=1)
+
+            if 'online' in inputs:
+                qs = self.network_out_2_qval(self.qnetwork(image_pairs, inputs['actions']))
+                return qs
+
             if 'actions' in inputs:
-                qs = self.qnetwork(image_pairs, inputs['actions'])
+                self.target_qnetwork.eval()
+                qs = self.target_qnetwork(image_pairs, inputs['actions'])
+                self.target_qnetwork.train()
                 return qs.detach().cpu().numpy()
 
             qs = self.compute_action_samples(image_pairs, self.target_qnetwork, parallel=False)
@@ -167,6 +173,8 @@ class QFunction(BaseModel):
                     # actions = (torch.FloatTensor(image_pairs.size(0), self._hp.action_size).normal_() * np.array(self._hp.action_stds, dtype='float32')).cuda()
                     actions = torch.FloatTensor(image_pairs.size(0), self._hp.action_size).uniform_(
                         *self._hp.action_range).to(self._hp.device)
+                    #actions = torch.FloatTensor(image_pairs.size(0), self._hp.action_size).uniform_(
+                    #    -0.6, 0.6).to(self._hp.device)
                     targetq = network(image_pairs, actions).detach()
                     qs.append(targetq)
                     if return_actions:
@@ -250,7 +258,7 @@ class QFunction(BaseModel):
 
         # get negatives:
         t0 = np.random.randint(0, tlen - tdist - 1, self._hp.batch_size)
-        t1 = t0 + 1
+        t1 = t0 + self._hp.n_step
         num_fs_goal = int(self._hp.fs_goal_prop * self._hp.batch_size)
         bitmask = np.array([0] * num_fs_goal + [1] * (self._hp.batch_size-num_fs_goal))
 
@@ -351,7 +359,7 @@ class QFunction(BaseModel):
 
         qs = self.get_target_q_samples(image_pairs)
         max_qs = self.get_max_q(self.network_out_2_qval(qs))
-        ret = torch.pow(self._hp.gamma, 1.0 * (self.t1 - self.tg)) * (self.t1 >= self.tg) # Compute discounted return
+        ret = torch.pow(self._hp.gamma, 1.0 * (self.tg - self.t0 - 1)) * (self.t1 >= self.tg) # Compute discounted return
 
         terminal_flag = (self.t1 >= self.tg).type(torch.ByteTensor).to(self._hp.device)
 
@@ -431,8 +439,6 @@ class QFunction(BaseModel):
             q_mat = self.network_out_2_qval(self.qnetwork(outer_prod, acts_rep)) # [B^2, 1]
             q_mat = torch.reshape(q_mat, (self.images.shape[0], self.images.shape[0])) #[Goals, batch]
             diags = torch.diag(q_mat)
-            #q_mat[torch.arange(states.shape[0]), torch.arange(states.shape[0])] = -1e20 # something really small
-            q_mat.fill_diagonal_(-1e20)
             lse = torch.logsumexp(q_mat, dim=0)
             losses.goal_cql_loss = self._hp.goal_cql_weight * (-diags+lse).mean()
 
@@ -497,7 +503,7 @@ class QFunction(BaseModel):
         return self._hp.device
 
     def qval_to_timestep(self, qvals):
-        return np.log(np.clip(qvals, 1e-5, 1)) / np.log(self._hp.gamma) + 1
+        return np.log(np.clip(qvals, 1e-5, 2)) / np.log(self._hp.gamma) + 1
 
 
 def select_indices(tensor, indices, batch_offset=0):
