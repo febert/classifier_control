@@ -262,7 +262,7 @@ class QFunction(BaseModel):
 
         # get negatives:
         t0 = np.random.randint(0, tlen - tdist - 1, self._hp.batch_size)
-        t1 = t0 + 1
+        t1 = t0 + self._hp.n_step
         num_fs_goal = int(self._hp.fs_goal_prop * self._hp.batch_size)
         bitmask = np.array([0] * num_fs_goal + [1] * (self._hp.batch_size-num_fs_goal))
 
@@ -363,7 +363,7 @@ class QFunction(BaseModel):
 
         qs = self.get_q_samples(image_pairs, self.target_qnetwork, detach_grad=True)
         max_qs = self.get_max_q(self.network_out_2_qval(qs))
-        ret = torch.pow(self._hp.gamma, 1.0 * (self.t1 - self.tg)) * (self.t1 >= self.tg) # Compute discounted return
+        ret = torch.pow(self._hp.gamma, 1.0 * (self.tg - self.t0 - 1)) * (self.t1 >= self.tg) # Compute discounted return
 
         terminal_flag = (self.t1 >= self.tg).type(torch.ByteTensor).to(self._hp.device)
 
