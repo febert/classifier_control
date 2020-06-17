@@ -69,6 +69,7 @@ class QFunction(BaseModel):
             'goal_cql_weight': 1.0,
             'sl_loss_weight': 1.0,
             'sl_loss': False,
+            'sigmoid': False,
         })
 
         # add new params to parent params
@@ -164,7 +165,7 @@ class QFunction(BaseModel):
 
         return qval
 
-    def compute_action_samples(self, image_pairs, network, parallel=True, return_actions=False):
+    def compute_action_samples(self, image_pairs, network, parallel=True, return_actions=False, detach_grad=True):
         if not parallel:
             qs = []
             actions_l = []
@@ -175,7 +176,9 @@ class QFunction(BaseModel):
                         *self._hp.action_range).to(self._hp.device)
                     #actions = torch.FloatTensor(image_pairs.size(0), self._hp.action_size).uniform_(
                     #    -0.6, 0.6).to(self._hp.device)
-                    targetq = network(image_pairs, actions).detach()
+                    targetq = network(image_pairs, actions)
+                    if detach_grad:
+                        targetq = targetq.detach()
                     qs.append(targetq)
                     if return_actions:
                         actions_l.append(actions)
@@ -186,7 +189,9 @@ class QFunction(BaseModel):
             assert image_pairs.size(0) % self._hp.est_max_samples == 0, 'image pairs should already be duplicated before calling in parallel'
             actions = torch.FloatTensor(image_pairs.size(0), self._hp.action_size).uniform_(
                 *self._hp.action_range).to(self.get_device())
-            targetq = network(image_pairs, actions).detach()
+            targetq = network(image_pairs, actions)
+            if detach_grad:
+                targetq = targetq.detach()
             qs = targetq.view(self._hp.est_max_samples, image_pairs.size(0)//self._hp.est_max_samples, -1)
 
         if return_actions:
@@ -206,11 +211,11 @@ class QFunction(BaseModel):
         goal_im = image_pairs[:, self._hp.state_size:]
         object_rew = 0
         if self._hp.object_rew_frac > 0:
-            assert self._hp.state_size > 18, 'State must include object state to use this reward!'
+            assert self._hp.state_size > 17, 'State must include object state to use this reward!'
             start_obj_pos, goal_obj_pos = start_im[:, 9:15], goal_im[:, 9:15]
             if self._hp.not_goal_cond:
                 goal_obj_pos = torch.FloatTensor([0.2, 0.8] * 3).to(self._hp.device)
-            object_rew = -torch.norm((start_obj_pos - goal_obj_pos)[:, 9:15], dim=1)
+            object_rew = -torch.norm((start_obj_pos - goal_obj_pos), dim=1)
 
         start_im, goal_im = self.get_arm_state(start_im), self.get_arm_state(goal_im)
         if self._hp.not_goal_cond:
@@ -220,7 +225,6 @@ class QFunction(BaseModel):
          2.2351e+00, -2.7262e-02,  3.0603e-04]).to(self._hp.device)
 
         arm_rew = -torch.norm((start_im-goal_im)[:, :9], dim=1)
-
         return self._hp.object_rew_frac * object_rew + (1-self._hp.object_rew_frac) * arm_rew
 
     def mse_reward(self, image_pairs):
@@ -347,33 +351,34 @@ class QFunction(BaseModel):
             out.append(states[idx//tsteps, idx % tsteps])
         return torch.stack(out, dim=0)
 
-    def get_target_q_samples(self, image_pairs, get_acts=False):
+    def get_q_samples(self, image_pairs, network, get_acts=False, detach_grad=True):
         image_pairs_rep = image_pairs[None] # Add one dimension
         repeat_shape = [self._hp.est_max_samples] + [1] * len(image_pairs.shape)
         image_pairs_rep = image_pairs_rep.repeat(*repeat_shape) # [num_samp, B, s_dim]
         image_pairs_rep = image_pairs_rep.view(
             *[self._hp.est_max_samples * image_pairs.shape[0]] + list(image_pairs_rep.shape[2:]))
-        return self.compute_action_samples(image_pairs_rep, self.target_qnetwork, parallel=True, return_actions=get_acts)
+        return self.compute_action_samples(image_pairs_rep, network, parallel=True, return_actions=get_acts, detach_grad=detach_grad)
 
     def get_td_error(self, image_pairs, model_output):
 
-        qs = self.get_target_q_samples(image_pairs)
+        qs = self.get_q_samples(image_pairs, self.target_qnetwork, detach_grad=True)
         max_qs = self.get_max_q(self.network_out_2_qval(qs))
         ret = torch.pow(self._hp.gamma, 1.0 * (self.tg - self.t0 - 1)) * (self.t1 >= self.tg) # Compute discounted return
 
         terminal_flag = (self.t1 >= self.tg).type(torch.ByteTensor).to(self._hp.device)
 
-        # if self._hp.l2_rew:
-        #     assert self._hp.low_dim, 'l2 rew should probably only be used with lowdim states!'
-        #     l2_rew = self.compute_lowdim_reward(image_pairs) / 20.0
-        #     if self._hp.sum_reward:
-        #         rew += l2_rew
-        #     else:
-        #         rew = l2_rew
+        if self._hp.l2_rew:
+            assert self._hp.low_dim, 'l2 rew should probably only be used with lowdim states!'
+            l2_rew = self.compute_lowdim_reward(image_pairs) / 5
+            if self._hp.sum_reward:
+                ret += l2_rew
+            else:
+                ret = l2_rew
 
         # if self._hp.add_image_mse_rew:
         #     image_mse_rew = self.mse_reward(image_pairs)  # This is a _negative_ value
         #     rew += image_mse_rew / 5.0
+
         discount = self._hp.gamma**(1.0*self._hp.n_step)
         if self._hp.terminal:
             target = (ret + discount * max_qs[0] * (1 - terminal_flag))  # terminal value
@@ -388,7 +393,11 @@ class QFunction(BaseModel):
 
     def loss(self, model_output):
 
-        def get_sg_pair(t, x):
+        def get_sg_pair(t):
+            if self._hp.low_dim:
+                x = self._hp.state_size
+            else:
+                x = 3
             return torch.cat((t[:, :x], t[:, 2 * x:]), axis=1)
 
         if self._hp.low_dim:
@@ -400,12 +409,8 @@ class QFunction(BaseModel):
 
         if self._hp.cross_traj_consistency:
 
-            if self._hp.low_dim:
-                same_traj_pair = get_sg_pair(self.neg_pair_cat, self._hp.state_size)
-                cross_traj_pair = get_sg_pair(self.cross_traj_pair_cat, self._hp.state_size)
-            else:
-                same_traj_pair = get_sg_pair(self.neg_pair_cat, 3)
-                cross_traj_pair = get_sg_pair(self.cross_traj_pair_cat, 3)
+            same_traj_pair = get_sg_pair(self.neg_pair_cat)
+            cross_traj_pair = get_sg_pair(self.cross_traj_pair_cat)
 
             neg_acts = self.acts[self._hp.batch_size:self._hp.batch_size*2]
 
@@ -417,7 +422,7 @@ class QFunction(BaseModel):
 
         if self._hp.min_q:
             # Implement minq loss
-            random_q_values = self.network_out_2_qval(self.get_target_q_samples(image_pairs))
+            random_q_values = self.network_out_2_qval(self.get_q_samples(get_sg_pair(self.images), self.qnetwork, detach_grad=False))
             random_density = np.log(0.5 ** self._hp.action_size) # log uniform density
             random_q_values -= random_density
             min_q_loss = torch.logsumexp(random_q_values, dim=0) - np.log(self._hp.est_max_samples)
@@ -449,6 +454,11 @@ class QFunction(BaseModel):
 
         losses.bellman_loss = self.get_td_error(image_pairs, model_output)
         losses.total_loss = torch.stack(list(losses.values())).sum()
+
+        if 'goal_cql_loss' in losses:
+            losses.goal_cql_loss /= self._hp.goal_cql_weight # Divide this back out so we can compare log likelihoods
+        if 'min_q_loss' in losses:
+            losses.min_q_loss /= self._hp.min_q_weight # Divide this back out so we can compare log likelihoods
 
         """ Target network lagging update """
         self.target_network_counter = self.target_network_counter + 1
@@ -503,7 +513,7 @@ class QFunction(BaseModel):
         return self._hp.device
 
     def qval_to_timestep(self, qvals):
-        return np.log(np.clip(qvals, 1e-5, 2)) / np.log(self._hp.gamma) + 1
+        return np.log(np.clip(qvals, 1e-10, 2)) / np.log(self._hp.gamma) + 1
 
 
 def select_indices(tensor, indices, batch_offset=0):
@@ -541,5 +551,6 @@ class QFunctionTestTime(QFunction):
         # Compute the log to get the units to be in timesteps
         if self._hp.l2_rew or self._hp.shifted_rew:
             return -qvals
+
         timesteps = self.qval_to_timestep(qvals)
         return timesteps

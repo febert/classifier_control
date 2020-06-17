@@ -54,10 +54,12 @@ class QNetwork(torch.nn.Module):
             self.linear2 = Linear(in_dim=128 + self._hp.action_size, out_dim=128, builder=self._hp.builder)
         self.linear3 = Linear(in_dim=128, out_dim=128, builder=self._hp.builder)
         self.linear4 = Linear(in_dim=128, out_dim=128, builder=self._hp.builder)
+
         #self.linear5 = Linear(in_dim=128, out_dim=128, builder=self._hp.builder)
         #self.linear6 = Linear(in_dim=128, out_dim=1, builder=self._hp.builder)
         self.linear5 = torch.nn.Linear(128, 128, bias=True)
-        self.linear6 = torch.nn.Linear(128, self.num_outputs, bias=True)
+        self.linear6 = torch.nn.Linear(128, 1, bias=True)
+
 
     def forward(self, image_pairs, actions):
         if self._hp.resnet:
@@ -84,7 +86,6 @@ class QNetwork(torch.nn.Module):
             embeddings = image_pairs
         else:
             embeddings = self.encoder(image_pairs).reshape(image_pairs.size(0), -1)
-
         e = F.relu(self.linear1(embeddings))
         if self._hp.film:
             film = F.relu(self.film1(actions))
@@ -102,7 +103,8 @@ class QNetwork(torch.nn.Module):
         qvalue = self.linear6(e)  # self.linear6(e)
         if self.num_outputs > 1:
             qvalue = F.softmax(qvalue)
-
+        if self._hp.sigmoid:
+            qvalue = F.sigmoid(qvalue)
         return qvalue
 
 
