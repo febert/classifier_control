@@ -11,8 +11,12 @@ def copy_with_replace_values(file_path, new_file_name, keys, values):
             for key, value in zip(keys, values):
                 if f"'{key}'" in data_line and "sweep_params" not in data_line:
                     # Do the actual replacing here
-                    data[i] = data[i].split(':')[0]
-                    data[i] += f': {value},\n'
+                    if value == 'default':
+                        data[i] = f'#{data[i].split(":")[0]}: default\n'
+                    else:
+                        data[i] = data[i].split(':')[0]
+                        data[i] += f': {value},\n'
+
         with open(new_file_name, 'w') as w:
             w.writelines(data)
 
