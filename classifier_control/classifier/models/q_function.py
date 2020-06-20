@@ -24,7 +24,11 @@ class QFunction(BaseModel):
         self.hm_counter = 0
 
     def init_optimizers(self, hp):
-        self.optimizer = Adam(self.parameters(), lr=hp.lr)
+        self.critic_optimizer = Adam(self.qnetwork.parameters(), lr=hp.lr)
+        self.optimizer = self.critic_optimizer
+        if self.actor_critic:
+            self.actor_optimizer = Adam(self.pi_net.parameters(), lr=hp.lr)
+
         if self._hp.goal_cql_lagrange:
             self.log_alpha = torch.zeros(1, requires_grad=True, device=self.device)
             self.alpha_optimizer = Adam(
@@ -33,16 +37,61 @@ class QFunction(BaseModel):
             )
 
     def optim_step(self, output):
+
         losses = self.loss(output)
         if self._hp.goal_cql_lagrange:
             self.alpha_optimizer.zero_grad()
             lagrange_loss = self.goal_cql_lagrange_loss
             lagrange_loss.backward(retain_graph=True)
             self.alpha_optimizer.step()
-        self.optimizer.zero_grad()
-        losses.total_loss.backward()
-        self.optimizer.step()
+        self.critic_optimizer.zero_grad()
+        losses.total_loss.backward(retain_graph=self.actor_critic)
+        self.critic_optimizer.step()
+
+        if self.actor_critic:
+            for p in self.qnetwork.parameters():
+                p.requires_grad = False
+            actor_loss = self.actor_loss()
+            self.actor_optimizer.zero_grad()
+            actor_loss.backward()
+            self.actor_optimizer.step()
+            for p in self.qnetwork.parameters():
+                p.requires_grad = True
+
+            losses.actor_loss = actor_loss
+
+        # Target network updates
+        """ Target network lagging update """
+        self.target_network_counter = self.target_network_counter + 1
+        if self.target_network_counter % self._hp.update_target_rate == 0:
+            if self._hp.target_network_update == 'replace':
+                self.target_qnetwork.load_state_dict(self.qnetwork.state_dict())
+                self.target_qnetwork.eval()
+                if self.actor_critic:
+                    self.target_pi_net.load_state_dict(self.pi_net.state_dict())
+                    self.target_pi_net.eval()
+            elif self._hp.target_network_update == 'polyak':
+                with torch.no_grad():
+                    for p, p_targ in zip(self.qnetwork.parameters(), self.target_qnetwork.parameters()):
+                        p_targ.data.mul_(self._hp.polyak)
+                        p_targ.data.add_((1 - self._hp.polyak) * p.data)
+                    if self.actor_critic:
+                        for p, p_targ in zip(self.pi_net.parameters(), self.target_pi_net.parameters()):
+                            p_targ.data.mul_(self._hp.polyak)
+                            p_targ.data.add_((1 - self._hp.polyak) * p.data)
+            self.target_network_counter = 0
+
         return losses
+
+    def actor_loss(self):
+        def get_sg_pair(t):
+            if self._hp.low_dim:
+                x = self._hp.state_size
+            else:
+                x = 3
+            return torch.cat((t[:, :x], t[:, 2 * x:]), axis=1)
+        image_pairs = get_sg_pair(self.images)
+        return -self.qnetwork(image_pairs, self.pi_net(image_pairs)).mean()
 
     @property
     def num_network_outputs(self):
@@ -98,6 +147,8 @@ class QFunction(BaseModel):
             'sigmoid': False,
             'fix_unit_mismatch': False,
             'optimize_actions': 'random_shooting',
+            'target_network_update': 'replace',
+            'polyak': 0.995,
         })
 
         # add new params to parent params
@@ -115,6 +166,12 @@ class QFunction(BaseModel):
         with torch.no_grad():
             self.target_qnetwork = q_network_type(self._hp, self.num_network_outputs)
             self.target_qnetwork.eval()
+
+        if self.actor_critic:
+            self.pi_net = ActorNetwork(self._hp)
+            with torch.no_grad():
+                self.target_pi_net = ActorNetwork(self._hp)
+                self.target_pi_net.eval()
 
     def network_out_2_qval(self, network_outputs):
         """
@@ -162,10 +219,10 @@ class QFunction(BaseModel):
                 acts = torch.cat([pos_act, neg_act, tn_act], dim=0)
             else:
                 acts = torch.cat([pos_act, neg_act], dim=0)
-            self.acts = acts
 
-            self.network_out = self.qnetwork(image_pairs, acts)
-            qval = self.network_out_2_qval(self.network_out)
+            self.acts = acts
+            network_out = self.qnetwork(image_pairs, acts)
+            qval = self.network_out_2_qval(network_out)
 
         else:
             if self._hp.low_dim:
@@ -199,11 +256,15 @@ class QFunction(BaseModel):
         if self._hp.optimize_actions == 'random_shooting':
             qs = self.compute_action_samples(image_pairs, self.target_qnetwork, parallel=True, detach_grad=True)
             max_qs = torch.max((self.network_out_2_qval(qs)), dim=0)[0]
-        elif self._hp.optimize_actions == 'actor':
+        elif self.actor_critic:
             with torch.no_grad():
                 max_qs = self.network_out_2_qval(self.target_qnetwork(image_pairs, self.target_pi_net(image_pairs)))
 
         return max_qs
+
+    @property
+    def actor_critic(self):
+        return self._hp.optimize_actions == 'actor_critic'
 
     def get_arm_state(self, states):
         assert states.shape[-1] > 18, 'State must be full vector to get arm subset'
@@ -526,13 +587,6 @@ class QFunction(BaseModel):
         if 'min_q_loss' in losses:
             losses.min_q_loss /= self._hp.min_q_weight # Divide this back out so we can compare log likelihoods
 
-        """ Target network lagging update """
-        self.target_network_counter = self.target_network_counter + 1
-        if self.target_network_counter % self._hp.update_target_rate == 0:
-            self.target_qnetwork.load_state_dict(self.qnetwork.state_dict())
-            self.target_qnetwork.eval()
-            self.target_network_counter = 0
-
         return losses
 
     def _log_outputs(self, model_output, inputs, losses, step, log_images, phase):
@@ -565,7 +619,7 @@ class QFunction(BaseModel):
                 # curr_states = torch.stack(curr_states)
                 self.target_qnetwork.eval()
                 image_pairs = torch.cat((curr_states, goal_state_rep), dim=1)
-                max_qs = self.get_max_q(image_pairs)
+                max_qs = self.get_max_q(image_pairs).detach().cpu().numpy()
 
                 def linspace_to_slice(min, max, num):
                     lsp = np.linspace(min, max, num)
@@ -604,7 +658,7 @@ class QFunction(BaseModel):
                 plt.clf()
 
                 heatmaps.append(np.concatenate((hmap_image, slice_image), axis=1)) # Concat heightwise
-                del curr_states, image_pairs, qs, max_qs, outer_prod
+                del curr_states, image_pairs, max_qs, outer_prod
                 torch.cuda.empty_cache()
 
             heatmaps = np.stack(heatmaps)
