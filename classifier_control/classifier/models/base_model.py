@@ -9,7 +9,7 @@ from classifier_control.classifier.utils.layers import LayerBuilderParams
 from tensorflow.contrib.training import HParams
 from classifier_control.classifier.utils.general_utils import AttrDict
 from classifier_control.classifier.utils.mixup_regularization import MixupRegularizer
-
+from torch.optim import Adam, SGD
 
 class BaseModel(nn.Module):
     def __init__(self, logger):
@@ -63,6 +63,16 @@ class BaseModel(nn.Module):
         self._hp.img_sz = self._hp.data_conf['img_sz']
         if self._hp.use_mixup:
             self.mixup_reg = MixupRegularizer(self._hp.mixup_alpha)
+
+    def init_optimizers(self, hp):
+        self.optimizer = Adam(self.parameters(), lr=hp.lr)
+
+    def optim_step(self, output):
+        losses = self.loss(output)
+        self.optimizer.zero_grad()
+        losses.total_loss.backward()
+        self.optimizer.step()
+        return losses
 
     def build_network(self):
         raise NotImplementedError("Need to implement this function in the subclass!")

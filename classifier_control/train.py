@@ -94,21 +94,20 @@ class ModelTrainer(BaseTrainer):
             logger = logger(log_dir, summary_writer=writer)
             model = ModelClass(model_conf, logger)
             model.to(self.device)
-            #model.device = self.device
-            model.device = torch.device('cpu')
+            model.device = self.device
             if phase is not 'test':
                 loader = FixLenVideoDataset(self._hp.data_dir, model._hp, data_conf, phase, shuffle=True).get_data_loader(self._hp.batch_size)
                 return model, loader
             else:
                 return model
-
         self.model, self.train_loader = build_phase(self._hp.logger, self._hp.model, 'train')
         self.model_val, self.val_loader = build_phase(self._hp.logger, self._hp.model, 'val')
         if self._hp.model_test is not None:
             self.model_test = build_phase(self._hp.logger, self._hp.model_test, 'test')
 
-        self.optimizer = Adam(self.model.parameters(), lr=self._hp.lr)
-        # self.optimizer = self.get_optimizer_class()(self.model.parameters(), lr=self._hp.lr)
+        self.model.init_optimizers(self._hp)
+
+
         self._hp.mpar = self.model._hp
 
         # TODO clean up resuming
@@ -122,6 +121,10 @@ class ModelTrainer(BaseTrainer):
             for epoch in list(sorted(epochs))[::4]:
                 self.resume(epoch)
                 self.val()
+            return
+
+        if self.args.online:
+            self.start_epoch = start_epoch
             return
 
         ## Train
@@ -178,6 +181,8 @@ class ModelTrainer(BaseTrainer):
                             help='path to latest checkpoint (default: none)')
         parser.add_argument('--train', default=True, type=int,
                             help='if False, will run one validation epoch')
+        parser.add_argument('--online', default=False, type=int,
+                            help='online or not')
         parser.add_argument('--test_prediction', default=True, type=int,
                             help="if False, prediction isn't run at validation time")
         parser.add_argument('--metric', default=False, type=int,
@@ -235,7 +240,7 @@ class ModelTrainer(BaseTrainer):
                     'epoch': epoch,
                     'global_step': self.global_step,
                     'state_dict': self.model.state_dict(),
-                    'optimizer': self.optimizer.state_dict(),
+                    'optimizer': self.model.optimizer.state_dict(),
                 },  os.path.join(self._hp.exp_path, 'weights'), CheckpointHandler.get_ckpt_name(epoch))
                 self.model.dump_params(self._hp.exp_path)
             self.train_epoch(epoch)
@@ -265,12 +270,9 @@ class ModelTrainer(BaseTrainer):
             data_load_time.update(time.time() - end)
             inputs = AttrDict(map_dict(lambda x: x.to(self.device), sample_batched))
 
-            self.optimizer.zero_grad()
             output = self.model(inputs)
-            losses = self.model.loss(output)
-            losses.total_loss.backward()
-            self.optimizer.step()
-            
+            losses = self.model.optim_step(output)
+
             upto_log_time.update(time.time() - end)
             if self.log_outputs_now:
                 self.model.log_outputs(output, inputs, losses, self.global_step,

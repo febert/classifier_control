@@ -4,6 +4,8 @@ import torch.nn.functional as F
 from classifier_control.classifier.models.base_model import BaseModel
 from classifier_control.classifier.utils.general_utils import AttrDict
 from classifier_control.classifier.utils.q_network import QNetwork, AugQNetwork
+from classifier_control.classifier.utils.actor_network import ActorNetwork
+from torch.optim import Adam, SGD
 
 
 class QFunction(BaseModel):
@@ -20,6 +22,27 @@ class QFunction(BaseModel):
         self._use_pred_length = False
         self.target_network_counter = 0
         self.hm_counter = 0
+
+    def init_optimizers(self, hp):
+        self.optimizer = Adam(self.parameters(), lr=hp.lr)
+        if self._hp.goal_cql_lagrange:
+            self.log_alpha = torch.zeros(1, requires_grad=True, device=self.device)
+            self.alpha_optimizer = Adam(
+                [self.log_alpha, ],
+                lr=self._hp.lr,
+            )
+
+    def optim_step(self, output):
+        losses = self.loss(output)
+        if self._hp.goal_cql_lagrange:
+            self.alpha_optimizer.zero_grad()
+            lagrange_loss = self.goal_cql_lagrange_loss
+            lagrange_loss.backward(retain_graph=True)
+            self.alpha_optimizer.step()
+        self.optimizer.zero_grad()
+        losses.total_loss.backward()
+        self.optimizer.step()
+        return losses
 
     @property
     def num_network_outputs(self):
@@ -74,6 +97,7 @@ class QFunction(BaseModel):
             'sl_loss': False,
             'sigmoid': False,
             'fix_unit_mismatch': False,
+            'optimize_actions': 'random_shooting',
         })
 
         # add new params to parent params
@@ -98,9 +122,6 @@ class QFunction(BaseModel):
         :return: Tensor of dimension [...] containing scalar q values.
         """
         return network_outputs.squeeze()
-
-    def get_max_q(self, qvals):
-        return qvals.max(dim=0)
 
     def forward(self, inputs):
         """
@@ -164,11 +185,25 @@ class QFunction(BaseModel):
             if 'actions' in inputs:
                 qs = self.target_qnetwork(image_pairs, inputs['actions'])
                 return qs.detach().cpu().numpy()
-            qs = self.compute_action_samples(image_pairs, self.target_qnetwork, parallel=False)
-            qval = self.get_max_q(self.network_out_2_qval(qs))[0]
+
+            qval = self.get_max_q(image_pairs)
             qval = qval.detach().cpu().numpy()
 
         return qval
+
+    def get_max_q(self, image_pairs):
+        """
+        :param image_pairs: image pairs (s)
+        :return: max_a Q(s, a)
+        """
+        if self._hp.optimize_actions == 'random_shooting':
+            qs = self.compute_action_samples(image_pairs, self.target_qnetwork, parallel=True, detach_grad=True)
+            max_qs = torch.max((self.network_out_2_qval(qs)), dim=0)[0]
+        elif self._hp.optimize_actions == 'actor':
+            with torch.no_grad():
+                max_qs = self.network_out_2_qval(self.target_qnetwork(image_pairs, self.target_pi_net(image_pairs)))
+
+        return max_qs
 
     def get_arm_state(self, states):
         assert states.shape[-1] > 18, 'State must be full vector to get arm subset'
@@ -333,20 +368,6 @@ class QFunction(BaseModel):
             out.append(states[idx//tsteps, idx % tsteps])
         return torch.stack(out, dim=0)
 
-    def get_q_samples(self, image_pairs, network, get_acts=False, parallel=True, detach_grad=True):
-        if parallel:
-            image_pairs_rep = image_pairs[None] # Add one dimension
-            repeat_shape = [self._hp.est_max_samples] + [1] * len(image_pairs.shape)
-            image_pairs_rep = image_pairs_rep.repeat(*repeat_shape) # [num_samp, B, s_dim]
-            image_pairs_rep = image_pairs_rep.view(
-                *[self._hp.est_max_samples * image_pairs.shape[0]] + list(image_pairs_rep.shape[2:]))
-
-            return self.compute_action_samples(image_pairs_rep, network, parallel=parallel, return_actions=get_acts,
-                                               detach_grad=detach_grad)
-        else:
-            return self.compute_action_samples(image_pairs, network, parallel=parallel, return_actions=get_acts,
-                                        detach_grad=detach_grad)
-
     def compute_action_samples(self, image_pairs, network, parallel=True, return_actions=False, detach_grad=True):
         if not parallel:
             qs = []
@@ -368,24 +389,29 @@ class QFunction(BaseModel):
             if actions_l:
                 actions = torch.stack(actions_l)
         else:
-            assert image_pairs.size(0) % self._hp.est_max_samples == 0, 'image pairs should already be duplicated before calling in parallel'
-            actions = torch.FloatTensor(image_pairs.size(0), self._hp.action_size).uniform_(
+            assert image_pairs.size(0) % self._hp.est_max_samples != 0, 'image pairs should not be duplicated before calling in parallel'
+            image_pairs_rep = image_pairs[None]  # Add one dimension
+            repeat_shape = [self._hp.est_max_samples] + [1] * len(image_pairs.shape)
+            image_pairs_rep = image_pairs_rep.repeat(*repeat_shape)  # [num_samp, B, s_dim]
+            image_pairs_rep = image_pairs_rep.view(
+                *[self._hp.est_max_samples * image_pairs.shape[0]] + list(image_pairs_rep.shape[2:]))
+
+            actions = torch.FloatTensor(image_pairs_rep.size(0), self._hp.action_size).uniform_(
                 *self._hp.action_range).to(self.get_device())
-            targetq = network(image_pairs, actions)
+            targetq = network(image_pairs_rep, actions)
             if detach_grad:
                 targetq = targetq.detach()
-            qs = targetq.view(self._hp.est_max_samples, image_pairs.size(0)//self._hp.est_max_samples, -1)
+            qs = targetq.view(self._hp.est_max_samples, image_pairs.size(0), -1)
 
         if return_actions:
-            actions = actions.view(self._hp.est_max_samples, image_pairs.size(0)//self._hp.est_max_samples, -1)
+            actions = actions.view(self._hp.est_max_samples, image_pairs.size(0), -1)
             return qs, actions
         else:
             return qs
 
     def get_td_error(self, image_pairs, model_output):
 
-        qs = self.get_q_samples(image_pairs, self.target_qnetwork, detach_grad=True)
-        max_qs = self.get_max_q(self.network_out_2_qval(qs))
+        max_qs = self.get_max_q(image_pairs)
         ret = torch.pow(self._hp.gamma, 1.0 * (self.tg - self.t0 - 1)) * (self.t1 >= self.tg) # Compute discounted return
 
         terminal_flag = (self.t1 >= self.tg).type(torch.ByteTensor).to(self._hp.device)
@@ -405,8 +431,8 @@ class QFunction(BaseModel):
         discount = self._hp.gamma**(1.0*self._hp.n_step)
         max_qs = max_qs[0]
         if self._hp.fix_unit_mismatch:
-            max_qs = max_qs.exp()
-            model_output = model_output.exp()
+            max_qs = torch.clamp(max_qs.exp(), min=0.001, max=2000000.0)
+            model_output = torch.clamp(model_output.exp(), min=0.001, max=2000000.0)
 
         if self._hp.terminal:
             target = (ret + discount * max_qs * (1 - terminal_flag))  # terminal value
@@ -450,7 +476,7 @@ class QFunction(BaseModel):
 
         if self._hp.min_q:
             # Implement minq loss
-            random_q_values = self.network_out_2_qval(self.get_q_samples(get_sg_pair(self.images), self.qnetwork, detach_grad=False))
+            random_q_values = self.network_out_2_qval(self.compute_action_samples(get_sg_pair(self.images), self.qnetwork, parallel=True, detach_grad=False))
             random_density = np.log(0.5 ** self._hp.action_size) # log uniform density
             random_q_values -= random_density
             min_q_loss = torch.logsumexp(random_q_values, dim=0) - np.log(self._hp.est_max_samples)
@@ -486,7 +512,6 @@ class QFunction(BaseModel):
                 unweighted_gcql_loss -= self._hp.goal_cql_eps
             losses.goal_cql_loss = (goal_cql_weight * unweighted_gcql_loss).squeeze()
             self.goal_cql_lagrange_loss = -1 * losses.goal_cql_loss
-
 
         if self._hp.sl_loss:
             sl_targets = torch.pow(self._hp.gamma, 1.0*(self.data_tdists-1))
@@ -540,11 +565,7 @@ class QFunction(BaseModel):
                 # curr_states = torch.stack(curr_states)
                 self.target_qnetwork.eval()
                 image_pairs = torch.cat((curr_states, goal_state_rep), dim=1)
-                qs = self.get_q_samples(image_pairs, self.target_qnetwork, detach_grad=True, parallel=False)
-                max_qs = self.get_max_q(self.network_out_2_qval(qs))[0].cpu().numpy()
-                #image_pairs = torch.cat((goal_state_rep, goal_state_rep), dim=1)
-                #qs = self.get_q_samples(image_pairs, self.target_qnetwork, detach_grad=True, parallel=True)
-                #max_qs = self.get_max_q(self.network_out_2_qval(qs))[0].cpu().numpy()
+                max_qs = self.get_max_q(image_pairs)
 
                 def linspace_to_slice(min, max, num):
                     lsp = np.linspace(min, max, num)
@@ -605,7 +626,7 @@ class QFunction(BaseModel):
         return self._hp.device
 
     def qval_to_timestep(self, qvals):
-        return np.log(np.clip(qvals, 1e-10, 2)) / np.log(self._hp.gamma) + 1
+        return np.log(np.clip(qvals, 1e-5, 2)) / np.log(self._hp.gamma) + 1
 
 
 def select_indices(tensor, indices, batch_offset=0):
