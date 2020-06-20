@@ -2,10 +2,10 @@ import numpy as np
 import torch
 import torch.nn.functional as F
 from classifier_control.classifier.models.base_model import BaseModel
+from classifier_control.classifier.utils.actor_network import ActorNetwork
 from classifier_control.classifier.utils.general_utils import AttrDict
 from classifier_control.classifier.utils.q_network import QNetwork, AugQNetwork
-from classifier_control.classifier.utils.actor_network import ActorNetwork
-from torch.optim import Adam, SGD
+from torch.optim import Adam
 
 
 class QFunction(BaseModel):
@@ -57,7 +57,6 @@ class QFunction(BaseModel):
             self.actor_optimizer.step()
             for p in self.qnetwork.parameters():
                 p.requires_grad = True
-
             losses.actor_loss = actor_loss
 
         # Target network updates
@@ -149,6 +148,9 @@ class QFunction(BaseModel):
             'optimize_actions': 'random_shooting',
             'target_network_update': 'replace',
             'polyak': 0.995,
+            'sg_sample': 'half_unif_half_first',
+            'geom_sample_p': 0.5,
+            'energy_fix_type': 0,
         })
 
         # add new params to parent params
@@ -194,20 +196,15 @@ class QFunction(BaseModel):
         if "demo_seq_images" in inputs.keys():
             tlen = inputs.demo_seq_images.shape[1]
 
-            if self._hp.true_negatives:
-                pos_pairs, neg_pairs, true_neg_pairs, pos_act, neg_act, tn_act = self.sample_image_triplet_actions(inputs.demo_seq_images,
-                                                                                           inputs.actions, tlen, 1,
-                                                                                           inputs.states)
-                self.images = torch.cat([pos_pairs, neg_pairs, true_neg_pairs], dim=0)
-            else:
-                pos_pairs, neg_pairs, pos_act, neg_act = self.sample_image_triplet_actions(inputs.demo_seq_images,
-                                                                                           inputs.actions, tlen, 1,
-                                                                                           inputs.states)
-                self.images = torch.cat([pos_pairs, neg_pairs], dim=0)
+            image_pairs, acts = self.sample_image_triplet_actions(inputs.demo_seq_images,
+                                                                  inputs.actions, tlen, 1,
+                                                                  inputs.states)
+            self.images = image_pairs
 
             if self._hp.low_dim:
                 if self._hp.not_goal_cond:
                     self.images[:, 2*self._hp.state_size:] = 0
+
                 image_0 = self.images[:, :self._hp.state_size]
                 image_g = self.images[:, 2*self._hp.state_size:]
             else:
@@ -215,11 +212,6 @@ class QFunction(BaseModel):
                 image_g = self.images[:, 6:]
 
             image_pairs = torch.cat([image_0, image_g], dim=1)
-            if self._hp.true_negatives:
-                acts = torch.cat([pos_act, neg_act, tn_act], dim=0)
-            else:
-                acts = torch.cat([pos_act, neg_act], dim=0)
-
             self.acts = acts
             network_out = self.qnetwork(image_pairs, acts)
             qval = self.network_out_2_qval(network_out)
@@ -259,7 +251,6 @@ class QFunction(BaseModel):
         elif self.actor_critic:
             with torch.no_grad():
                 max_qs = self.network_out_2_qval(self.target_qnetwork(image_pairs, self.target_pi_net(image_pairs)))
-
         return max_qs
 
     @property
@@ -298,6 +289,34 @@ class QFunction(BaseModel):
         start_im, goal_im = image_pairs[:, :split_ind], image_pairs[:, split_ind:]
         return -torch.mean((start_im - goal_im) ** 2)
 
+    def sample_sg_indices(self, tlen, bs, sampling_strat):
+        if sampling_strat == 'uniform':
+            """
+            Sample two sets of indices, and then compute the min to be the start index and max to be the goal
+            """
+            i0 = torch.randint(0, tlen, (bs,), device=self.get_device(), dtype=torch.long)
+            i1 = torch.randint(0, tlen-1, (bs,), device=self.get_device(), dtype=torch.long)
+            i1[i1 == i0] = tlen
+            return torch.min(i0, i1), torch.max(i0, i1)
+        elif sampling_strat == 'geometric':
+            """
+            Sample the first index, and then sample the second according to a geometric distribution with parameter p 
+            """
+            i0 = torch.randint(0, tlen, (bs,), device=self.get_device(), dtype=torch.long)
+            dist = torch.distributions.geometric.Geometric(self._hp.geom_sample_p).sample((bs,)).to(self.get_device()).long()
+            return i0, torch.clamp(i0+dist, max=tlen-1)
+        elif sampling_strat == 'half_unif_half_first':
+            """
+            Sample half of the batch uniformly, and the other half so that ig = i0 + 1
+            This is the sampling method that we've been using for a while
+            """
+            i0_first = torch.randint(0, tlen-1, (bs//2,), device=self.get_device(), dtype=torch.long)
+            ig_first = i0_first + 1
+            i0, ig = self.sample_sg_indices(tlen, bs//2, 'uniform')
+            return torch.cat([i0_first, i0]), torch.cat([ig_first, ig])
+        else:
+            assert NotImplementedError(f'Sampling method {sampling_strat} not implemented!')
+
     def sample_image_triplet_actions(self, images, actions, tlen, tdist, states):
 
         if self._hp.state_size == 18:
@@ -305,112 +324,26 @@ class QFunction(BaseModel):
         else:
             states = states[:, :, :self._hp.state_size]
 
-        ###
-        # Setup batch splits
-        num_splits = 3 if self._hp.true_negatives else 2
-        split_size = int(self._hp.batch_size / num_splits + 0.5)
-        if num_splits == 3:
-            pos_ims, neg_ims, tn_ims = torch.split(images, split_size)
-            pos_states, neg_states, tn_states = torch.split(states, split_size)
-            pos_acts, neg_acts, tn_acts = torch.split(actions, split_size)
-            self.pos_bs, self.neg_bs, self.tn_bs = pos_ims.shape[0], neg_ims.shape[0], tn_ims.shape[0]
-        else:
-            pos_ims, neg_ims = torch.split(images, split_size)
-            pos_states, neg_states = torch.split(states, split_size)
-            pos_acts, neg_acts = torch.split(actions, split_size)
-            self.pos_bs, self.neg_bs = pos_ims.shape[0], neg_ims.shape[0]
-        #
-        ###
-
-        # get positives:
-        t0 = torch.randint(0, tlen - tdist - 1, (self.pos_bs,), device=self.get_device(), dtype=torch.long)
+        t0, tg = self.sample_sg_indices(tlen, self._hp.batch_size, self._hp.sg_sample)
         t1 = t0 + self._hp.n_step
-        tg = t0 + 1 + torch.randint(0, tdist, (self.pos_bs,), device=self.get_device(), dtype=torch.long)
-        pos_tdist = tg-t0
 
         self.t0, self.t1, self.tg = t0, t1, tg
 
-        im_t0 = select_indices(pos_ims, t0)
-        im_t1 = select_indices(pos_ims, t1)
-        im_tg = select_indices(pos_ims, tg)
-        s_t0 = select_indices(pos_states, t0)
-        s_t1 = select_indices(pos_states, t1)
-        s_tg = select_indices(pos_states, tg)
-        pos_act = select_indices(pos_acts, t0)
-        self.pos_pair = torch.stack([im_t0, im_tg], dim=1)
+        im_t0 = select_indices(images, t0)
+        im_t1 = select_indices(images, t1)
+        im_tg = select_indices(images, tg)
+        s_t0 = select_indices(states, t0)
+        s_t1 = select_indices(states, t1)
+        s_tg = select_indices(states, tg)
+
+        acts = select_indices(actions, t0)
+        self.image_pairs = torch.stack([im_t0, im_tg], dim=1)
         if self._hp.low_dim:
-            self.pos_pair_cat = torch.cat([s_t0, s_t1, s_tg], dim=1)
+            self.image_pairs_cat = torch.cat([s_t0, s_t1, s_tg], dim=1)
         else:
-            self.pos_pair_cat = torch.cat([im_t0, im_t1, im_tg], dim=1)
+            self.image_pairs_cat = torch.cat([im_t0, im_t1, im_tg], dim=1)
 
-        # get negatives:
-        t0 = np.random.randint(0, tlen - tdist - 1, self.neg_bs)
-        t1 = t0 + self._hp.n_step
-        num_fs_goal = int(self._hp.fs_goal_prop * self.neg_bs)
-        bitmask = np.array([0] * num_fs_goal + [1] * (self.neg_bs-num_fs_goal))
-
-        # 1 in bitmask means we will use an intermediate state as goal, 0 means use the final state of the trajectory
-        tg = [np.random.randint(t0[b] + tdist + 1, tlen, 1).squeeze() if bitmask[b] else tlen-1 for b in range(self.neg_bs)]
-        tg = np.array(tg).squeeze()
-        t0, t1, tg = torch.from_numpy(t0).to(self._hp.device), torch.from_numpy(t1).to(self._hp.device), torch.from_numpy(tg).to(self._hp.device)
-        negs_tdist = tg-t0
-
-        self.t0, self.t1, self.tg = torch.cat([self.t0, t0]), torch.cat([self.t1, t1]), torch.cat([self.tg, tg])
-
-        im_t0 = select_indices(neg_ims, t0)
-        im_t1 = select_indices(neg_ims, t1)
-        im_tg = select_indices(neg_ims, tg)
-        s_t0 = select_indices(neg_states, t0)
-        s_t1 = select_indices(neg_states, t1)
-        s_tg = select_indices(neg_states, tg)
-        neg_act = select_indices(neg_acts, t0)
-
-        self.neg_pair = torch.stack([im_t0, im_tg], dim=1)
-        if self._hp.low_dim:
-            self.neg_pair_cat = torch.cat([s_t0, s_t1, s_tg], dim=1)
-        else:
-            self.neg_pair_cat = torch.cat([im_t0, im_t1, im_tg], dim=1)
-
-        if self._hp.cross_traj_consistency:
-            im_tg = select_indices(images, tg, batch_offset=1)
-            s_tg = select_indices(states, tg, batch_offset=1)
-            if self._hp.low_dim:
-                self.cross_traj_pair_cat = torch.cat([s_t0, s_t1, s_tg], dim=1)
-            else:
-                self.cross_traj_pair_cat = torch.cat([im_t0, im_t1, im_tg], dim=1)
-
-        self.data_tdists = torch.cat([pos_tdist, negs_tdist], axis=0)
-
-        if self._hp.true_negatives:
-            t0 = np.random.randint(0, tlen - tdist - 1, self.tn_bs)
-            t1 = t0 + 1
-            tg = [np.random.randint(t0[b] + tdist + 1, tlen, 1) for b in range(self.tn_bs)]
-            tg = np.array(tg).squeeze()
-            t0, t1, tg = torch.from_numpy(t0).to(self._hp.device), torch.from_numpy(t1).to(self._hp.device), torch.from_numpy(tg).to(self._hp.device)
-            self.data_tdists = torch.cat([self.data_tdists, tg-t0]) # This one doesn't really make as much sense
-
-            self.t0, self.t1, self.tg = torch.cat([self.t0, t0]), torch.cat([self.t1, t1]), torch.cat([self.tg, tg])
-
-            im_t0 = select_indices(tn_ims, t0)
-            im_t1 = select_indices(tn_ims, t1)
-            im_tg = select_indices(tn_ims, tg, batch_offset=1)
-            s_t0 = select_indices(tn_states, t0)
-            s_t1 = select_indices(tn_states, t1)
-            if self._hp.close_arm_negatives:
-                s_tg = self.select_close_arm_goals(tn_states, s_t0)
-            else:
-                s_tg = select_indices(tn_states, tg, batch_offset=1)
-            true_neg_act = select_indices(tn_acts, t0)
-            self.true_neg_pair = torch.stack([im_t0, im_tg], dim=1)
-            if self._hp.low_dim:
-                self.true_neg_pair_cat = torch.cat([s_t0, s_t1, s_tg], dim=1)
-            else:
-                self.true_neg_pair_cat = torch.cat([im_t0, im_t1, im_tg], dim=1)
-
-        if self._hp.true_negatives:
-            return self.pos_pair_cat, self.neg_pair_cat, self.true_neg_pair_cat, pos_act, neg_act, true_neg_act
-        else:
-            return self.pos_pair_cat, self.neg_pair_cat, pos_act, neg_act
+        return self.image_pairs_cat, acts
 
     def select_close_arm_goals(self, states, s_t0):
         # States is [B, T, N]
@@ -491,7 +424,7 @@ class QFunction(BaseModel):
 
         discount = self._hp.gamma**(1.0*self._hp.n_step)
         max_qs = max_qs[0]
-        if self._hp.fix_unit_mismatch:
+        if self._hp.energy_fix_type == 1: # Ben's eq (5)
             max_qs = torch.clamp(max_qs.exp(), min=0.001, max=2000000.0)
             model_output = torch.clamp(model_output.exp(), min=0.001, max=2000000.0)
 
@@ -522,19 +455,6 @@ class QFunction(BaseModel):
 
         losses = AttrDict()
 
-        if self._hp.cross_traj_consistency:
-
-            same_traj_pair = get_sg_pair(self.neg_pair_cat)
-            cross_traj_pair = get_sg_pair(self.cross_traj_pair_cat)
-
-            neg_acts = self.acts[self.pos_bs:self.pos_bs+self.neg_bs]
-
-            #losses.cross_traj_loss = torch.clamp(self.qnetwork(cross_traj_pair, neg_acts)
-            #                                     - self.qnetwork(same_traj_pair, neg_acts), min=0).mean()
-            ct_pair_q = self.qnetwork(cross_traj_pair, neg_acts)
-            same_q = self.qnetwork(same_traj_pair, neg_acts)
-            losses.cross_traj_loss = 0.005 * (ct_pair_q - same_q).mean()
-
         if self._hp.min_q:
             # Implement minq loss
             random_q_values = self.network_out_2_qval(self.compute_action_samples(get_sg_pair(self.images), self.qnetwork, parallel=True, detach_grad=False))
@@ -560,6 +480,9 @@ class QFunction(BaseModel):
             q_mat = self.network_out_2_qval(self.qnetwork(outer_prod, acts_rep)) # [B^2, 1]
             q_mat = torch.reshape(q_mat, (self.images.shape[0], self.images.shape[0])) #[Goals, batch]
 
+            if self._hp.energy_fix_type == 2: # Ben's eq (6)
+                q_mat = torch.log(q_mat)
+
             diags = torch.diag(q_mat)
             lse = torch.logsumexp(q_mat, dim=0)
 
@@ -577,9 +500,13 @@ class QFunction(BaseModel):
         if self._hp.sl_loss:
             sl_targets = torch.pow(self._hp.gamma, 1.0*(self.data_tdists-1))
             # We won't use the supervised learning loss for the out of trajectory goals
-            losses.sl_loss = self._hp.sl_loss_weight * F.mse_loss(model_output[:self._hp.batch_size-self.tn_bs], sl_targets[:self._hp.batch_size-self.tn_bs])
+            losses.sl_loss = self._hp.sl_loss_weight * F.mse_loss(model_output, sl_targets)
 
         losses.bellman_loss = self.get_td_error(image_pairs, model_output)
+
+        if self._hp.energy_fix_type == 4:  # Frederik's alt formulation 2
+            losses.bellman_loss = torch.log(losses.bellman_loss)
+
         losses.total_loss = torch.stack(list(losses.values())).sum()
 
         if 'goal_cql_loss' in losses and not self._hp.goal_cql_lagrange:
@@ -671,7 +598,7 @@ class QFunction(BaseModel):
                                                                'tdist{}'.format("Q"), step, phase)
                 self._logger.log_one_ex(self.true_neg_pair, model_output[-self.tn_bs:].data.cpu().numpy(), 'tdist{}'.format("Q"), step, phase, 'true_negatives')
             else:
-                self._logger.log_single_tdist_classifier_image(self.pos_pair, self.neg_pair, model_output,
+                self._logger.log_single_tdist_classifier_image(self.image_pairs[:self._hp.batch_size//2], self.image_pairs[self._hp.batch_size//2:], model_output,
                                                           'tdist{}'.format("Q"), step, phase)
 #             self._logger.log_heatmap_image(self.pos_pair, qvals, model_output.squeeze(),
 #                                                           'tdist{}'.format("Q"), step, phase)
