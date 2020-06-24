@@ -89,7 +89,7 @@ class QFunction(BaseModel):
                 x = 3
             return torch.cat((t[:, :x], t[:, 2 * x:]), axis=1)
         image_pairs = get_sg_pair(self.images)
-        return -self.qnetwork(image_pairs, self.pi_net(image_pairs)).mean()
+        return -self.network_out_2_qval(self.qnetwork(image_pairs, self.pi_net(image_pairs))).mean()
 
     @property
     def num_network_outputs(self):
@@ -178,6 +178,8 @@ class QFunction(BaseModel):
         :param softmax_values: Tensor of softmax values of dimension [..., num_bins]
         :return: Tensor of dimension [...] containing scalar q values.
         """
+        if self._hp.sigmoid:
+            network_outputs = F.sigmoid(network_outputs)
         return network_outputs.squeeze()
 
     def forward(self, inputs):
@@ -215,6 +217,7 @@ class QFunction(BaseModel):
             image_pairs = torch.cat([image_0, image_g], dim=1)
             self.acts = acts
             network_out = self.qnetwork(image_pairs, acts)
+            self.network_out = network_out
             qval = self.network_out_2_qval(network_out)
 
         else:
@@ -319,7 +322,6 @@ class QFunction(BaseModel):
             assert NotImplementedError(f'Sampling method {sampling_strat} not implemented!')
 
     def sample_image_triplet_actions(self, images, actions, tlen, tdist, states):
-
         states[states != states] == 0.0 # turn inf values into 0
 
         if self._hp.state_size == 18:
@@ -479,14 +481,21 @@ class QFunction(BaseModel):
             goals = torch.repeat_interleave(goals, goals.shape[0], dim=0)
             outer_prod = torch.cat([states, goals], dim=1)
 
-            q_mat = self.network_out_2_qval(self.qnetwork(outer_prod, acts_rep)) # [B^2, 1]
-            q_mat = torch.reshape(q_mat, (self.images.shape[0], self.images.shape[0])) #[Goals, batch]
+            if self._hp.energy_fix_type == 2:
+                assert self._hp.sigmoid, 'Need to use sigmoid to use energy fix 2'
+                q_mat = self.qnetwork(outer_prod, acts_rep) # [B^2, 1]
+                q_mat = torch.reshape(q_mat, (self.images.shape[0], self.images.shape[0])) #[Goals, batch]
 
-            if self._hp.energy_fix_type == 2: # Ben's eq (6)
-                q_mat = torch.log(q_mat)
+                diags = torch.diag(q_mat)
+                # Compute log(sigmoid(x))
+                diags = diags - F.softplus(diags)
+                lse = torch.log(torch.sum(self.network_out_2_qval(q_mat), dim=0))
+            else:
+                q_mat = self.network_out_2_qval(self.qnetwork(outer_prod, acts_rep)) # [B^2, 1]
+                q_mat = torch.reshape(q_mat, (self.images.shape[0], self.images.shape[0])) #[Goals, batch]
 
-            diags = torch.diag(q_mat)
-            lse = torch.logsumexp(q_mat, dim=0)
+                diags = torch.diag(q_mat)
+                lse = torch.logsumexp(q_mat, dim=0)
 
             if self._hp.goal_cql_lagrange and hasattr(self, 'log_alpha'):
                 goal_cql_weight = torch.clamp(self.log_alpha.exp(), min=0.1, max=2000000.0)
@@ -516,7 +525,6 @@ class QFunction(BaseModel):
                 losses.goal_cql_loss /= self._hp.goal_cql_weight # Divide this back out so we can compare log likelihoods
         if 'min_q_loss' in losses:
             losses.min_q_loss /= self._hp.min_q_weight # Divide this back out so we can compare log likelihoods
-
         return losses
 
     def _log_outputs(self, model_output, inputs, losses, step, log_images, phase):
@@ -524,7 +532,8 @@ class QFunction(BaseModel):
             self._logger.log_scalar(self.log_alpha.exp().item(), 'alpha', step, phase)
         if log_images:
             self.hm_counter += 1
-        if log_images and self._hp.low_dim and self.hm_counter == 1:
+
+        if log_images and self._hp.low_dim and self.hm_counter == 20:
             self.hm_counter = 0
             # Log heatmaps
             heatmaps = []

@@ -103,8 +103,7 @@ class QNetwork(torch.nn.Module):
         qvalue = self.linear6(e)  # self.linear6(e)
         if self.num_outputs > 1:
             qvalue = F.softmax(qvalue)
-        if self._hp.sigmoid:
-            qvalue = F.sigmoid(qvalue)
+
         return qvalue
 
 
