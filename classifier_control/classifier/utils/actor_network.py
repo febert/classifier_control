@@ -16,9 +16,11 @@ class ActorNetwork(torch.nn.Module):
         self.mlp = torch.nn.Sequential()
 
         self.mlp.add_module('linear_1', Linear(in_dim=out_size, out_dim=128, builder=self._hp.builder))
-        for i in range(3):
+        for i in range(10):
             self.mlp.add_module(f'linear_{i+1}', Linear(in_dim=128, out_dim=128, builder=self._hp.builder))
+            self.mlp.add_module(f'relu_{i+1}', torch.nn.ReLU())
         self.mlp.add_module('linear_final', Linear(in_dim=128, out_dim=self._hp.action_size, builder=self._hp.builder))
+        self.mlp.add_module('tanh', torch.nn.Tanh())
 
     def forward(self, image_pairs):
         embeddings = self.encoder(image_pairs).view(image_pairs.size(0), -1)

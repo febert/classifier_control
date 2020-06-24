@@ -137,7 +137,7 @@ class ModelTrainer(BaseTrainer):
         weights_file = CheckpointHandler.get_resume_ckpt_file(ckpt, os.path.join(self._hp.exp_path, 'weights'))
         self.global_step, start_epoch, _ = \
             CheckpointHandler.load_weights(weights_file, self.model,
-                                           load_step_and_opt=True, optimizer=self.optimizer,
+                                           load_step_and_opt=True, optimizer=self.model.optimizer,
                                            dataset_length=len(self.train_loader) * self._hp.batch_size,
                                            strict=self.args.strict_weight_loading)
         self.model.to(self.model.device)

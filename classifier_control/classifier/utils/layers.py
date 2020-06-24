@@ -18,7 +18,7 @@ class Block(nn.Sequential, HasParameters):
         self.builder = kwargs.pop('builder')
         nn.Sequential.__init__(self)
         HasParameters.__init__(self, **kwargs)
-        if self.params.normalization is None and self.params.normalization != 'none':
+        if self.params.normalization is not None and self.params.normalization == 'none':
             self.params.normalize = False
         if not self.params.normalize:
             self.params.normalization = None

@@ -33,11 +33,10 @@ class QFunction(BaseModel):
             self.log_alpha = torch.zeros(1, requires_grad=True, device=self.device)
             self.alpha_optimizer = Adam(
                 [self.log_alpha, ],
-                lr=self._hp.lr,
+                lr=hp.lr,
             )
 
     def optim_step(self, output):
-
         losses = self.loss(output)
         if self._hp.goal_cql_lagrange:
             self.alpha_optimizer.zero_grad()
@@ -144,7 +143,6 @@ class QFunction(BaseModel):
             'sl_loss_weight': 1.0,
             'sl_loss': False,
             'sigmoid': False,
-            'fix_unit_mismatch': False,
             'optimize_actions': 'random_shooting',
             'target_network_update': 'replace',
             'polyak': 0.995,
@@ -192,6 +190,9 @@ class QFunction(BaseModel):
         #### Train vs Test
         if self.target_qnetwork.training:
             self.target_qnetwork.eval()
+        #if self.actor_critic:
+            #if self.target_pi_net.training:
+                #self.target_pi_net.eval()
 
         if "demo_seq_images" in inputs.keys():
             tlen = inputs.demo_seq_images.shape[1]
@@ -250,7 +251,7 @@ class QFunction(BaseModel):
             max_qs = torch.max((self.network_out_2_qval(qs)), dim=0)[0]
         elif self.actor_critic:
             with torch.no_grad():
-                max_qs = self.network_out_2_qval(self.target_qnetwork(image_pairs, self.target_pi_net(image_pairs)))
+                max_qs = self.network_out_2_qval(self.target_qnetwork(image_pairs, self.target_pi_net(image_pairs))).detach()
         return max_qs
 
     @property
@@ -302,7 +303,7 @@ class QFunction(BaseModel):
             """
             Sample the first index, and then sample the second according to a geometric distribution with parameter p 
             """
-            i0 = torch.randint(0, tlen, (bs,), device=self.get_device(), dtype=torch.long)
+            i0 = torch.randint(0, tlen-1, (bs,), device=self.get_device(), dtype=torch.long)
             dist = torch.distributions.geometric.Geometric(self._hp.geom_sample_p).sample((bs,)).to(self.get_device()).long()
             return i0, torch.clamp(i0+dist, max=tlen-1)
         elif sampling_strat == 'half_unif_half_first':
@@ -318,6 +319,8 @@ class QFunction(BaseModel):
             assert NotImplementedError(f'Sampling method {sampling_strat} not implemented!')
 
     def sample_image_triplet_actions(self, images, actions, tlen, tdist, states):
+
+        states[states != states] == 0.0 # turn inf values into 0
 
         if self._hp.state_size == 18:
             states = self.get_arm_state(states)
@@ -436,7 +439,6 @@ class QFunction(BaseModel):
         if self._hp.true_negatives and self._hp.zero_tn_target:
             tn_lb = torch.cat([torch.zeros(self.pos_bs + self.neg_bs), torch.ones(self.tn_bs)]).to(self.get_device())
             target *= (1 - tn_lb)
-
         return F.mse_loss(target, model_output)
 
     def loss(self, model_output):
@@ -521,8 +523,7 @@ class QFunction(BaseModel):
             self._logger.log_scalar(self.log_alpha.exp().item(), 'alpha', step, phase)
         if log_images:
             self.hm_counter += 1
-
-        if log_images and self._hp.low_dim and self.hm_counter == 20:
+        if log_images and self._hp.low_dim and self.hm_counter == 1:
             self.hm_counter = 0
             # Log heatmaps
             heatmaps = []
@@ -545,7 +546,11 @@ class QFunction(BaseModel):
                 #         curr_states.append(cs)
                 # curr_states = torch.stack(curr_states)
                 self.target_qnetwork.eval()
+                if self.actor_critic:
+                    self.target_pi_net.eval()
+
                 image_pairs = torch.cat((curr_states, goal_state_rep), dim=1)
+
                 max_qs = self.get_max_q(image_pairs).detach().cpu().numpy()
 
                 def linspace_to_slice(min, max, num):
@@ -628,6 +633,9 @@ class QFunctionTestTime(QFunction):
             self.load_state_dict(checkpoint['state_dict'])
             self.target_qnetwork.load_state_dict(self.qnetwork.state_dict())
             self.target_qnetwork.eval()
+            if self.actor_critic:
+                self.target_pi_net.load_state_dict(self.pi_net.state_dict())
+                self.target_pi_net.eval()
         else:
             print('#########################')
             print("Warning Q function weights not restored during init!!")
