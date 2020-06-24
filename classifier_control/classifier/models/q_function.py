@@ -512,7 +512,8 @@ class QFunction(BaseModel):
         losses.total_loss = torch.stack(list(losses.values())).sum()
 
         if 'goal_cql_loss' in losses and not self._hp.goal_cql_lagrange:
-            losses.goal_cql_loss /= self._hp.goal_cql_weight # Divide this back out so we can compare log likelihoods
+            if self._hp.goal_cql_weight > 1e-10:
+                losses.goal_cql_loss /= self._hp.goal_cql_weight # Divide this back out so we can compare log likelihoods
         if 'min_q_loss' in losses:
             losses.min_q_loss /= self._hp.min_q_weight # Divide this back out so we can compare log likelihoods
 
