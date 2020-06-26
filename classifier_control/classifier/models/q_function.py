@@ -149,6 +149,7 @@ class QFunction(BaseModel):
             'sg_sample': 'half_unif_half_first',
             'geom_sample_p': 0.5,
             'energy_fix_type': 0,
+            'bellman_weight': 1.0,
         })
 
         # add new params to parent params
@@ -322,6 +323,7 @@ class QFunction(BaseModel):
             assert NotImplementedError(f'Sampling method {sampling_strat} not implemented!')
 
     def sample_image_triplet_actions(self, images, actions, tlen, tdist, states):
+
         states[states != states] == 0.0 # turn inf values into 0
 
         if self._hp.state_size == 18:
@@ -513,7 +515,7 @@ class QFunction(BaseModel):
             # We won't use the supervised learning loss for the out of trajectory goals
             losses.sl_loss = self._hp.sl_loss_weight * F.mse_loss(model_output, sl_targets)
 
-        losses.bellman_loss = self.get_td_error(image_pairs, model_output)
+        losses.bellman_loss = self._hp.bellman_weight * self.get_td_error(image_pairs, model_output)
 
         if self._hp.energy_fix_type == 4:  # Frederik's alt formulation 2
             losses.bellman_loss = torch.log(losses.bellman_loss)
