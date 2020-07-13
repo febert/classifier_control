@@ -55,10 +55,10 @@ class QNetwork(torch.nn.Module):
         self.linear3 = Linear(in_dim=128, out_dim=128, builder=self._hp.builder)
         self.linear4 = Linear(in_dim=128, out_dim=128, builder=self._hp.builder)
 
-        #self.linear5 = Linear(in_dim=128, out_dim=128, builder=self._hp.builder)
-        #self.linear6 = Linear(in_dim=128, out_dim=1, builder=self._hp.builder)
-        self.linear5 = torch.nn.Linear(128, 128, bias=True)
-        self.linear6 = torch.nn.Linear(128, 1, bias=True)
+        self.linear5 = Linear(in_dim=128, out_dim=128, builder=self._hp.builder)
+        self.linear6 = Linear(in_dim=128, out_dim=1, builder=self._hp.builder)
+        #self.linear5 = torch.nn.Linear(128, 128, bias=True)
+        #self.linear6 = torch.nn.Linear(128, 1, bias=True)
 
 
     def forward(self, image_pairs, actions):

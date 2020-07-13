@@ -22,6 +22,7 @@ class QFunction(BaseModel):
         self._use_pred_length = False
         self.target_network_counter = 0
         self.hm_counter = 0
+        self.proxy_ctrl_counter = 0
 
     def init_optimizers(self, hp):
         self.critic_optimizer = Adam(self.qnetwork.parameters(), lr=hp.lr)
@@ -133,7 +134,6 @@ class QFunction(BaseModel):
             'add_image_mse_rew': False,
             'sum_reward': False,
             'zero_tn_target': True,
-            'cross_traj_consistency': False,
             'close_arm_negatives': False,
             'n_step': 1,
             'goal_cql': False,
@@ -150,6 +150,7 @@ class QFunction(BaseModel):
             'geom_sample_p': 0.5,
             'energy_fix_type': 0,
             'bellman_weight': 1.0,
+            'td_loss': 'mse',
         })
 
         # add new params to parent params
@@ -191,12 +192,6 @@ class QFunction(BaseModel):
         :return: model_output
         """
         #### Train vs Test
-        if self.target_qnetwork.training:
-            self.target_qnetwork.eval()
-        #if self.actor_critic:
-            #if self.target_pi_net.training:
-                #self.target_pi_net.eval()
-
         if "demo_seq_images" in inputs.keys():
             tlen = inputs.demo_seq_images.shape[1]
 
@@ -242,7 +237,6 @@ class QFunction(BaseModel):
 
             qval = self.get_max_q(image_pairs)
             qval = qval.detach().cpu().numpy()
-
         return qval
 
     def get_max_q(self, image_pairs):
@@ -255,7 +249,8 @@ class QFunction(BaseModel):
             max_qs = torch.max((self.network_out_2_qval(qs)), dim=0)[0]
         elif self.actor_critic:
             with torch.no_grad():
-                max_qs = self.network_out_2_qval(self.target_qnetwork(image_pairs, self.target_pi_net(image_pairs))).detach()
+                best_actions = self.target_pi_net(image_pairs)
+                max_qs = self.network_out_2_qval(self.target_qnetwork(image_pairs, best_actions)).detach()
         return max_qs
 
     @property
@@ -301,7 +296,7 @@ class QFunction(BaseModel):
             """
             i0 = torch.randint(0, tlen, (bs,), device=self.get_device(), dtype=torch.long)
             i1 = torch.randint(0, tlen-1, (bs,), device=self.get_device(), dtype=torch.long)
-            i1[i1 == i0] = tlen
+            i1[i1 == i0] = tlen-1
             return torch.min(i0, i1), torch.max(i0, i1)
         elif sampling_strat == 'geometric':
             """
@@ -324,7 +319,7 @@ class QFunction(BaseModel):
 
     def sample_image_triplet_actions(self, images, actions, tlen, tdist, states):
 
-        states[states != states] == 0.0 # turn inf values into 0
+        #states[states != states] = 0.0 # turn inf values into 0
 
         if self._hp.state_size == 18:
             states = self.get_arm_state(states)
@@ -390,7 +385,7 @@ class QFunction(BaseModel):
             if actions_l:
                 actions = torch.stack(actions_l)
         else:
-            assert image_pairs.size(0) % self._hp.est_max_samples != 0, 'image pairs should not be duplicated before calling in parallel'
+            #assert image_pairs.size(0) % self._hp.est_max_samples != 0, 'image pairs should not be duplicated before calling in parallel'
             image_pairs_rep = image_pairs[None]  # Add one dimension
             repeat_shape = [self._hp.est_max_samples] + [1] * len(image_pairs.shape)
             image_pairs_rep = image_pairs_rep.repeat(*repeat_shape)  # [num_samp, B, s_dim]
@@ -413,7 +408,7 @@ class QFunction(BaseModel):
     def get_td_error(self, image_pairs, model_output):
 
         max_qs = self.get_max_q(image_pairs)
-        ret = torch.pow(self._hp.gamma, 1.0 * (self.tg - self.t0 - 1)) * (self.t1 >= self.tg) # Compute discounted return
+        rew = torch.pow(self._hp.gamma, 1.0 * (self.tg - self.t0 - 1)) * (self.t1 >= self.tg) # Compute discounted return
 
         terminal_flag = (self.t1 >= self.tg).type(torch.ByteTensor).to(self._hp.device)
 
@@ -421,32 +416,34 @@ class QFunction(BaseModel):
             assert self._hp.low_dim, 'l2 rew should probably only be used with lowdim states!'
             l2_rew = self.compute_lowdim_reward(image_pairs) / 5
             if self._hp.sum_reward:
-                ret += l2_rew
+                rew += l2_rew
             else:
-                ret = l2_rew
+                rew = l2_rew
 
         # if self._hp.add_image_mse_rew:
         #     image_mse_rew = self.mse_reward(image_pairs)  # This is a _negative_ value
         #     rew += image_mse_rew / 5.0
 
         discount = self._hp.gamma**(1.0*self._hp.n_step)
-        max_qs = max_qs[0]
         if self._hp.energy_fix_type == 1: # Ben's eq (5)
             max_qs = torch.clamp(max_qs.exp(), min=0.001, max=2000000.0)
             model_output = torch.clamp(model_output.exp(), min=0.001, max=2000000.0)
 
         if self._hp.terminal:
-            target = (ret + discount * max_qs * (1 - terminal_flag))  # terminal value
+            target = (rew + discount * max_qs * (1 - terminal_flag))  # terminal value
         else:
-            target = ret + discount * max_qs
+            target = rew + discount * max_qs
 
         if self._hp.true_negatives and self._hp.zero_tn_target:
             tn_lb = torch.cat([torch.zeros(self.pos_bs + self.neg_bs), torch.ones(self.tn_bs)]).to(self.get_device())
             target *= (1 - tn_lb)
-        return F.mse_loss(target, model_output)
+
+        if self._hp.td_loss == 'mse':
+            return F.mse_loss(target, model_output)
+        elif self._hp.td_loss == 'huber':
+            return F.smooth_l1_loss(target, model_output)
 
     def loss(self, model_output):
-
         def get_sg_pair(t):
             if self._hp.low_dim:
                 x = self._hp.state_size
@@ -534,14 +531,37 @@ class QFunction(BaseModel):
             self._logger.log_scalar(self.log_alpha.exp().item(), 'alpha', step, phase)
         if log_images:
             self.hm_counter += 1
+            self.proxy_ctrl_counter += 1
+
+        if log_images and self.proxy_ctrl_counter == 50:
+            self.proxy_ctrl_counter = 0
+            # Compute proxy control perf
+            from classifier_control.classifier.ranking_metric import RankingMetric
+            import os
+            data_dir = f'{os.environ["VMPC_EXP"]}/planning_eval/'
+            rm = RankingMetric(data_dir, cache_data=False)
+            queries = [
+                {
+                    't': 0,
+                    'cem_itr': 0,
+                    'horizon': 13,
+                }
+            ]
+            scores = rm(lambda inp: -1*self(inp), queries=queries, scoring=[rm.exp_dcg])[0]
+            stats = rm.get_stats(scores)
+            for key in stats:
+                for x in stats[key]:
+                    self._logger.log_scalar(stats[key][x], f'{key}_{x}', step, phase)
+
 
         if log_images and self._hp.low_dim and self.hm_counter == 20:
             self.hm_counter = 0
             # Log heatmaps
-            heatmaps = []
+            heatmaps_vary_curr = []
+            heatmaps_vary_goal = []
             x_range = -0.3, 0.3
             y_range = -0.3, 0.3
-            for i in range(10):
+            for i in range(5):
                 state = self.images[i, :self._hp.state_size]
                 vary_ind = np.random.randint(0, 3) #index of object to move
                 goal_state = state.clone()
@@ -562,51 +582,58 @@ class QFunction(BaseModel):
                     self.target_pi_net.eval()
 
                 image_pairs = torch.cat((curr_states, goal_state_rep), dim=1)
-
+                image_pairs_flip = torch.cat((goal_state_rep, curr_states), dim=1)
                 max_qs = self.get_max_q(image_pairs).detach().cpu().numpy()
-
-                def linspace_to_slice(min, max, num):
-                    lsp = np.linspace(min, max, num)
-                    delta = lsp[1] - lsp[0]
-                    return slice(min, max + delta, delta)
-
-                x, y = np.mgrid[
-                    linspace_to_slice(x_range[0], x_range[1], 101),
-                    linspace_to_slice(y_range[0], y_range[1], 101)
-                ]
-
-                import matplotlib.pyplot as plt
-                data = np.reshape(max_qs, (101, 101)).copy()
-
-                fig, ax = plt.subplots(figsize=(4, 3), dpi=80)
-                plt.plot(np.linspace(y_range[0], y_range[1], num=101), data[:, data.shape[0] // 2])
-                ax.set(xlabel='obj y pos', ylabel='expected distance')
-                fig.canvas.draw()
-                slice_image = np.fromstring(fig.canvas.tostring_rgb(), dtype=np.uint8, sep='')
-                slice_image = slice_image.reshape(fig.canvas.get_width_height()[::-1] + (3,))
-                slice_image = np.transpose(slice_image, (2, 0, 1)) # [C, H, W]
-                plt.clf()
-
-                data = data[:-1, :-1]
-                cmap = plt.get_cmap('hot')
-                fig, ax = plt.subplots(figsize=(4, 3), dpi=80)
-                im = ax.pcolormesh(x, y, data, cmap=cmap)
-                fig.colorbar(im, ax=ax)
-                # plt.subplots_adjust(left=0.3, right=0, bottom=0.3, top=0)
-                ax.set(xlabel='obj x pos', ylabel='object y pos')
-                plt.tight_layout()
-                fig.canvas.draw()
-                hmap = np.fromstring(fig.canvas.tostring_rgb(), dtype=np.uint8, sep='')
-                hmap_image = hmap.reshape(fig.canvas.get_width_height()[::-1] + (3,))
-                hmap_image = np.transpose(hmap_image, (2, 0, 1)) # [C, H, W]
-                plt.clf()
-
-                heatmaps.append(np.concatenate((hmap_image, slice_image), axis=1)) # Concat heightwise
+                max_qs_flip = self.get_max_q(image_pairs_flip).detach().cpu().numpy()
+                heatmaps_vary_curr.append(self.get_heatmap(max_qs, x_range, y_range))
+                heatmaps_vary_goal.append(self.get_heatmap(max_qs_flip, x_range, y_range))
                 del curr_states, image_pairs, max_qs, outer_prod
                 torch.cuda.empty_cache()
+            heatmaps_vary_curr = np.stack(heatmaps_vary_curr)
+            heatmaps_vary_goal = np.stack(heatmaps_vary_goal)
+            self._logger.log_images(heatmaps_vary_curr, 'heatmaps_objects_vary_curr', step, phase)
+            self._logger.log_images(heatmaps_vary_goal, 'heatmaps_objects_vary_goal', step, phase)
 
-            heatmaps = np.stack(heatmaps)
-            self._logger.log_images(heatmaps, 'heatmaps', step, phase)
+            heatmaps_vary_curr = []
+            heatmaps_vary_goal = []
+            x_range = -0.2, 0.2
+            y_range = 0.4, 0.8
+            import pickle as pkl
+            import pathlib
+            path = pathlib.Path(__file__).parent.absolute()
+            with open(path.joinpath('arm_poses.pkl'), 'rb') as f:
+                arm_poses = pkl.load(f)
+            arm_poses = torch.FloatTensor(arm_poses).cuda()
+            for i in range(5):
+                state = self.images[i, :self._hp.state_size]
+                goal_state = state.clone()
+                goal_state_rep = goal_state[None].repeat(101*101, 1)
+                curr_states = torch.cat(
+                    (arm_poses, goal_state_rep[:, 9:]), dim=1)
+
+                # for x in np.linspace(x_range[0], x_range[1], num=101):
+                #     for y in np.linspace(y_range[0], y_range[1], num=101):
+                #         cs = goal_state.clone()
+                #         cs[9+vary_ind*2:10+vary_ind*2] = torch.FloatTensor((x, y))
+                #         curr_states.append(cs)
+                # curr_states = torch.stack(curr_states)
+                self.target_qnetwork.eval()
+                if self.actor_critic:
+                    self.target_pi_net.eval()
+
+                image_pairs = torch.cat((curr_states, goal_state_rep), dim=1)
+                image_pairs_flip = torch.cat((goal_state_rep, curr_states), dim=1)
+                max_qs = self.get_max_q(image_pairs).detach().cpu().numpy()
+                max_qs_flip = self.get_max_q(image_pairs_flip).detach().cpu().numpy()
+                heatmaps_vary_curr.append(self.get_heatmap(max_qs, x_range, y_range))
+                heatmaps_vary_goal.append(self.get_heatmap(max_qs_flip, x_range, y_range))
+
+                del curr_states, image_pairs, max_qs
+                torch.cuda.empty_cache()
+            heatmaps_vary_curr = np.stack(heatmaps_vary_curr)
+            heatmaps_vary_goal = np.stack(heatmaps_vary_goal)
+            self._logger.log_images(heatmaps_vary_curr, 'heatmaps_arm_vary_curr', step, phase)
+            self._logger.log_images(heatmaps_vary_goal, 'heatmaps_arm_vary_goal', step, phase)
 
         if log_images:
             if self._hp.true_negatives:
@@ -620,6 +647,46 @@ class QFunction(BaseModel):
 #             self._logger.log_heatmap_image(self.pos_pair, qvals, model_output.squeeze(),
 #                                                           'tdist{}'.format("Q"), step, phase)
 
+    def get_heatmap(self, data, x_range, y_range, side_len=101):
+
+        def linspace_to_slice(min, max, num):
+            lsp = np.linspace(min, max, num)
+            delta = lsp[1] - lsp[0]
+            return slice(min, max + delta, delta)
+
+        x, y = np.mgrid[
+            linspace_to_slice(x_range[0], x_range[1], side_len),
+            linspace_to_slice(y_range[0], y_range[1], side_len)
+        ]
+
+        import matplotlib.pyplot as plt
+        data = np.reshape(data, (side_len, side_len)).copy()
+
+        fig, ax = plt.subplots(figsize=(4, 3), dpi=80)
+        plt.plot(np.linspace(y_range[0], y_range[1], num=side_len), data[:, data.shape[0] // 2])
+        ax.set(xlabel='obj y pos', ylabel='expected distance')
+        fig.canvas.draw()
+        slice_image = np.fromstring(fig.canvas.tostring_rgb(), dtype=np.uint8, sep='')
+        slice_image = slice_image.reshape(fig.canvas.get_width_height()[::-1] + (3,))
+        slice_image = np.transpose(slice_image, (2, 0, 1))  # [C, H, W]
+        plt.clf()
+
+        data = data[:-1, :-1]
+        cmap = plt.get_cmap('hot')
+        fig, ax = plt.subplots(figsize=(4, 3), dpi=80)
+        im = ax.pcolormesh(x, y, data, cmap=cmap)
+        fig.colorbar(im, ax=ax)
+        # plt.subplots_adjust(left=0.3, right=0, bottom=0.3, top=0)
+        ax.set(xlabel='obj x pos', ylabel='object y pos')
+        plt.tight_layout()
+        fig.canvas.draw()
+        hmap = np.fromstring(fig.canvas.tostring_rgb(), dtype=np.uint8, sep='')
+        hmap_image = hmap.reshape(fig.canvas.get_width_height()[::-1] + (3,))
+        hmap_image = np.transpose(hmap_image, (2, 0, 1))  # [C, H, W]
+        plt.clf()
+
+        return np.concatenate((hmap_image, slice_image), axis=1)  # Concat heightwise
+
     def get_device(self):
         return self._hp.device
 
@@ -628,7 +695,7 @@ class QFunction(BaseModel):
 
 
 def select_indices(tensor, indices, batch_offset=0):
-    batch_idx = torch.arange(len(indices)).cuda()
+    batch_idx = torch.arange(indices.shape[0]).cuda()
     if batch_offset != 0:
         batch_idx = torch.roll(batch_idx, batch_offset)
     if not isinstance(indices, torch.Tensor):
