@@ -156,7 +156,7 @@ class RankingMetric:
 
         for query in queries:
             outputs = []
-            for idx in tqdm.tqdm(range(1, self.num_trajs)):
+            for idx in tqdm.tqdm(range(self.num_trajs)):
                 traj_data = self.get_traj_query(idx, query)
                 score = self.query_traj_score(traj_data, dist_fn, scoring)
                 query_outputs = {k:np.array(v) for k, v in score.items()}
@@ -217,12 +217,19 @@ class RandomScorer:
     def predict(self, inp_dict):
         return np.random.random(inp_dict['current_state'].shape[0])
 
+
+class StateMSE:
+
+    def predict(self, inp_dict):
+        return -torch.norm(inp_dict['current_state']-inp_dict['goal_state'], dim=1)
+
+
 if __name__ == '__main__':
     import os
     from classifier_control.classifier.utils.DistFuncEvaluation import DistFuncEvaluation
     from classifier_control.classifier.models.q_function import QFunctionTestTime
     from classifier_control.classifier.models.dist_q_function import DistQFunctionTestTime
-    from classifier_control.classifier.models.tempdist_regressor import TempdistRegressor
+    from classifier_control.classifier.models.tempdist_regressor import TempdistRegressorTestTime
     from classifier_control.baseline_costs.image_mse_cost import ImageMseCost
 
     data_dir = f'{os.environ["VMPC_EXP"]}/planning_eval/'
@@ -236,23 +243,44 @@ if __name__ == '__main__':
     #          'VMPC_EXP'] + '/classifier_control/distfunc_training/q_function_training/tabletop-texture/' + \
     #          'only_arm_state_loopback/weights/weights_ep995.pth'
     #
-    # model_path = \
-    #      os.environ[
-    #          'VMPC_EXP'] + '/classifier_control/distfunc_training/q_function_training/tabletop-texture/' + \
-    #          'lowdim_loopback_endgoal_negs/weights/weights_ep995.pth'
+    model_path = \
+         os.environ[
+             'VMPC_EXP'] + '/classifier_control/distfunc_training/q_function_training/tabletop-texture/' + \
+             'lowdim_loopback_endgoal_negs/weights/weights_ep990.pth'
+
+    model_path = \
+        os.environ[
+            'VMPC_EXP'] + '/classifier_control/distfunc_training/q_function_training/tabletop-texture/' + \
+        'lowdim/weights/weights_ep995.pth'
+
 
     # model_path = \
     #     os.environ[
     #         'VMPC_EXP'] + '/classifier_control/distfunc_training/q_function_training/tabletop-texture/' + \
-    #     'lowdim/weights/weights_ep995.pth'
+    #     'lowdim_loopback_minq/weights/weights_ep995.pth'
+    #
+
+    # model_path = \
+    #      os.environ[
+    #          'VMPC_EXP'] + '/classifier_control/distfunc_training/q_function_training/tabletop-texture/' + \
+    #      'inventory/l2_obj_rew_ac_lowdim/weights/weights_ep600.pth'
+
+    # model_path = \
+    #      os.environ[
+    #          'VMPC_EXP'] + '/classifier_control/distfunc_training/q_function_training/tabletop-texture/' + \
+    #         'goal_cql/weight=100_batchfix_ONLYCQL/weights/weights_ep100.pth'
+
+    # model_path = \
+    #      os.environ['VMPC_EXP'] + '/classifier_control/distfunc_training/q_function_training/tabletop-texture/' + \
+    #         '/inventory/l2_obj_rew_ac_lowdim/weights/weights_ep995.pth'
 
     model_path = \
-         os.environ[
-             'VMPC_EXP'] + '/classifier_control/distfunc_training/q_function_training/tabletop-texture/' + \
-         'inventory/l2_obj_rew_ac_lowdim/weights/weights_ep600.pth'
+         os.environ['VMPC_EXP'] + '/classifier_control/distfunc_training/q_function_training/tabletop-texture/' + \
+            '/inventory/tdist_reg/weights/weights_ep195.pth'
 
     learned_cost_class = QFunctionTestTime
-    #learned_cost_class = ImageMseCost
+#    learned_cost_class = ImageMseCost
+    learned_cost_class = TempdistRegressorTestTime
 
     rm = RankingMetric(data_dir, cache_data=False)
     learned_cost_testparams = dict()
@@ -270,12 +298,15 @@ if __name__ == '__main__':
 
     import time
     start_time = time.time()
-    scores = rm(RandomScorer(), queries=queries, scoring=[rm.kendall_tau, rm.dcg, rm.exp_dcg])
-    print("--- %s seconds ---" % (time.time() - start_time))
-    print((scores[0]))
-    scores = rm(learned_cost, queries=queries, scoring=[rm.kendall_tau, rm.dcg, rm.exp_dcg])
-    print("--- %s seconds ---" % (time.time() - start_time))
+    # scores = rm(StateMSE(), queries=queries, scoring=[rm.kendall_tau, rm.dcg, rm.exp_dcg])
+    # print("--- %s seconds ---" % (time.time() - start_time))
+    # print((scores[0]))
+    # print(rm.get_stats(scores[0])['exp_dcg'])
 
+    scores = rm(learned_cost, queries=queries, scoring=[rm.exp_dcg, rm.kendall_tau])
+    #for score in scores[0]['kendall_tau']:
+    #    print(score)
+    print("--- %s seconds ---" % (time.time() - start_time))
     print(rm.get_stats(scores[0])['exp_dcg'])
 
 

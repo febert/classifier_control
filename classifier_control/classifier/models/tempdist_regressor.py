@@ -28,6 +28,7 @@ class TempdistRegressor(BaseModel):
 
         self.tdist_classifiers = []
         self.build_network()
+        self.proxy_ctrl_counter = 0
 
     def _default_hparams(self):
         default_dict = AttrDict({
@@ -35,7 +36,8 @@ class TempdistRegressor(BaseModel):
             'use_skips':False, #todo try resnet architecture!
             'ngf': 8,
             'nz_enc': 64,
-            'classifier_restore_path':None  # not really needed here.
+            'classifier_restore_path':None, # not really needed here.
+            'film': False,
         })
 
         # add new params to parent params
@@ -120,6 +122,10 @@ class TempdistRegressor(BaseModel):
     def _log_outputs(self, model_output, inputs, losses, step, log_images, phase):
         if log_images:
             self._logger.log_pair_predictions(self.img_pair, self.tdist_estimates, self.labels,'tdist_regression', step, phase)
+            self.proxy_ctrl_counter += 1
+        if log_images and self.proxy_ctrl_counter == 50:
+            self.proxy_ctrl_counter = 0
+            self.log_control_proxy(lambda inps: TempdistRegressorTestTime.forward(self, inps), step, phase)
 
     def loss(self, model_output):
         losses = AttrDict()

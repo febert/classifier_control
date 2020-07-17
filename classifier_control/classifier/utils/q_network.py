@@ -14,6 +14,7 @@ class QNetwork(torch.nn.Module):
         super().__init__()
         self._hp = hp
         self.num_outputs = num_outputs
+        self.ll_size = ll_size = self._hp.linear_layer_size
 
         if self._hp.resnet:
             num_channels = 6
@@ -23,12 +24,12 @@ class QNetwork(torch.nn.Module):
                 num_channels += self._hp.action_size
                 outputs = self.num_outputs
             else:
-                self.linear2 = Linear(in_dim=128 + self._hp.action_size, out_dim=128, builder=self._hp.builder)
-                self.linear3 = Linear(in_dim=128, out_dim=128, builder=self._hp.builder)
-                self.linear4 = Linear(in_dim=128, out_dim=128, builder=self._hp.builder)
-                self.linear5 = Linear(in_dim=128, out_dim=128, builder=self._hp.builder)
-                self.linear6 = Linear(in_dim=128, out_dim=1, builder=self._hp.builder)
-                outputs = 128
+                self.linear2 = Linear(in_dim=ll_size + self._hp.action_size, out_dim=ll_size, builder=self._hp.builder)
+                self.linear3 = Linear(in_dim=ll_size, out_dim=ll_size, builder=self._hp.builder)
+                self.linear4 = Linear(in_dim=ll_size, out_dim=ll_size, builder=self._hp.builder)
+                self.linear5 = Linear(in_dim=ll_size, out_dim=ll_size, builder=self._hp.builder)
+                self.linear6 = Linear(in_dim=ll_size, out_dim=1, builder=self._hp.builder)
+                outputs = ll_size
             model_type = None
             if self._hp.resnet_type == 'resnet50':
                 model_type = models.resnet50
@@ -40,26 +41,23 @@ class QNetwork(torch.nn.Module):
             return
 
         if self._hp.low_dim:
-            self.linear1 = Linear(in_dim=2*self._hp.state_size, out_dim=128, builder=self._hp.builder)
-            self.linear2 = Linear(in_dim=128 + self._hp.action_size, out_dim=128, builder=self._hp.builder)
+            self.linear1 = Linear(in_dim=2*self._hp.state_size, out_dim=ll_size, builder=self._hp.builder)
+            self.linear2 = Linear(in_dim=ll_size + self._hp.action_size, out_dim=ll_size, builder=self._hp.builder)
             if self._hp.film:
-                self.film1 = Linear(in_dim=self._hp.action_size, out_dim=128, builder=self._hp.builder)
-                self.film2 = Linear(in_dim=128, out_dim=128, builder=self._hp.builder)
-                self.film3 = Linear(in_dim=128, out_dim=128, builder=self._hp.builder)
-                self.film4 = Linear(in_dim=128, out_dim=256, builder=self._hp.builder)
+                self.film1 = Linear(in_dim=self._hp.action_size, out_dim=ll_size, builder=self._hp.builder)
+                self.film2 = Linear(in_dim=ll_size, out_dim=ll_size, builder=self._hp.builder)
+                self.film3 = Linear(in_dim=ll_size, out_dim=ll_size, builder=self._hp.builder)
+                self.film4 = Linear(in_dim=ll_size, out_dim=256, builder=self._hp.builder)
         else:
             self.encoder = ConvEncoder(self._hp)
             out_size = self.encoder.get_output_size()
-            self.linear1 = Linear(in_dim=out_size[0]*5*5, out_dim=128, builder=self._hp.builder)
-            self.linear2 = Linear(in_dim=128 + self._hp.action_size, out_dim=128, builder=self._hp.builder)
-        self.linear3 = Linear(in_dim=128, out_dim=128, builder=self._hp.builder)
-        self.linear4 = Linear(in_dim=128, out_dim=128, builder=self._hp.builder)
+            self.linear1 = Linear(in_dim=out_size[0]*5*5, out_dim=ll_size, builder=self._hp.builder)
+            self.linear2 = Linear(in_dim=ll_size + self._hp.action_size, out_dim=ll_size, builder=self._hp.builder)
+        self.linear3 = Linear(in_dim=ll_size, out_dim=ll_size, builder=self._hp.builder)
+        self.linear4 = Linear(in_dim=ll_size, out_dim=ll_size, builder=self._hp.builder)
 
-        self.linear5 = Linear(in_dim=128, out_dim=128, builder=self._hp.builder)
-        self.linear6 = Linear(in_dim=128, out_dim=1, builder=self._hp.builder)
-        #self.linear5 = torch.nn.Linear(128, 128, bias=True)
-        #self.linear6 = torch.nn.Linear(128, 1, bias=True)
-
+        self.linear5 = Linear(in_dim=ll_size, out_dim=ll_size, builder=self._hp.builder)
+        self.linear6 = Linear(in_dim=ll_size, out_dim=1, builder=self._hp.builder)
 
     def forward(self, image_pairs, actions):
         if self._hp.resnet:
@@ -92,7 +90,7 @@ class QNetwork(torch.nn.Module):
             film = F.relu(self.film2(film))
             film = F.relu(self.film3(film))
             film = self.film4(film)
-            action_gamma, action_beta = film[:, :128], film[:, 128:]
+            action_gamma, action_beta = film[:, :self.l_size], film[:, self.ll_size:]
             e = e * action_gamma + action_beta
         else:
             e = torch.cat([e, actions], dim=1)

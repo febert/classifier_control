@@ -57,6 +57,25 @@ class BaseModel(nn.Module):
 
         return parent_params
 
+    def log_control_proxy(self, cost_fn, step, phase):
+        # Cost fn: a one-argument function which takes a batch of inputs and outputs a scoring where lower is better.
+        from classifier_control.classifier.ranking_metric import RankingMetric
+        import os
+        data_dir = f'{os.environ["VMPC_EXP"]}/planning_eval/'
+        rm = RankingMetric(data_dir, cache_data=False)
+        queries = [
+            {
+                't': 0,
+                'cem_itr': 0,
+                'horizon': 13,
+            }
+        ]
+        scores = rm(cost_fn, queries=queries, scoring=[rm.exp_dcg])[0]
+        stats = rm.get_stats(scores)
+        for key in stats:
+            for x in stats[key]:
+                self._logger.log_scalar(stats[key][x], f'{key}_{x}', step, phase)
+
     def postprocess_params(self):
         self._hp.add_hparam('builder', LayerBuilderParams(
             self._hp.use_convs, self._hp.use_batchnorm, self._hp.normalization))
