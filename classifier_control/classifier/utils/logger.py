@@ -131,7 +131,6 @@ class TdistClassifierLogger(Logger):
 
     def log_single_tdist_classifier_image(self, pos_pair, neg_pair, out_sigmoid,
                                                   name, step, phase):
-
         self.log_one_ex(pos_pair, out_sigmoid[:out_sigmoid.shape[0]//2].data.cpu().numpy(), name, step, phase, 'positives')
         self.log_one_ex(neg_pair, out_sigmoid[out_sigmoid.shape[0]//2:].data.cpu().numpy(), name, step, phase, 'negatives')
 

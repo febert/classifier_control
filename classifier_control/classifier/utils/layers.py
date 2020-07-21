@@ -31,7 +31,8 @@ class Block(nn.Sequential, HasParameters):
             normalize=True,
             activation=nn.LeakyReLU(0.2, inplace=True),
             normalization=self.builder.normalization,
-            normalization_params=AttrDict()
+            normalization_params=AttrDict(),
+            spectral_norm=self.builder.spectral_norm,
         )
         return params
 
@@ -97,8 +98,11 @@ class FCBlock(Block):
         return params
 
     def build_block(self):
-        self.add_module('linear', nn.Linear(self.params.in_dim, self.params.out_dim, bias=not self.params.normalize))
-
+        mod = nn.Linear(self.params.in_dim, self.params.out_dim, bias=not self.params.normalize)
+        if self.params.spectral_norm:
+            self.add_module('linear', nn.utils.spectral_norm(mod))
+        else:
+            self.add_module('linear', mod)
 
 class Linear(FCBlock):
     def get_default_params(self):
@@ -137,12 +141,13 @@ def get_num_conv_layers(img_sz):
 class LayerBuilderParams:
     """ This class holds general parameters for all subnetworks, such as whether to use convolutional networks, etc """
 
-    def __init__(self, use_convs, normalize=True, normalization='batch', predictor_normalization=None):
+    def __init__(self, use_convs, normalize=True, normalization='batch', predictor_normalization=None, spectral_norm=False):
         self.use_convs = use_convs
         self.init_fn = init_weights_xavier
         self.normalize = normalize
         self.normalization = normalization
         self.predictor_normalization = predictor_normalization
+        self.spectral_norm = spectral_norm
 
     @property
     def get_num_layers(self):

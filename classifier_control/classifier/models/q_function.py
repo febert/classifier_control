@@ -29,9 +29,8 @@ class QFunction(BaseModel):
         self.optimizer = self.critic_optimizer
         if self.actor_critic:
             self.actor_optimizer = Adam(self.pi_net.parameters(), lr=hp.lr)
-
         if self._hp.goal_cql_lagrange:
-            self.log_alpha = torch.zeros(1, requires_grad=True, device=self.device)
+            self.log_alpha = torch.zeros(1, requires_grad=True, device=self.get_device())
             self.alpha_optimizer = Adam(
                 [self.log_alpha, ],
                 lr=hp.lr,
@@ -368,7 +367,7 @@ class QFunction(BaseModel):
         acts = acts.repeat(2, 1)
         t0 = t0.repeat(2)
         t1 = t1.repeat(2)
-        tg = torch.cat((tg, torch.ones(curr_bs).to(self.device).long()*1000))
+        tg = torch.cat((tg, torch.ones(curr_bs).to(self.get_device()).long()*1000))
         return s_t0, s_t1, s_tg, acts, t0, t1, tg
 
     def sample_image_triplet_actions(self, images, actions, tlen, tdist, states):
@@ -585,14 +584,14 @@ class QFunction(BaseModel):
             losses.min_q_loss /= self._hp.min_q_weight # Divide this back out so we can compare log likelihoods
         return losses
 
-    def _log_outputs(self, model_output, inputs, losses, step, log_images, phase):
+    def _log_outputs(self, model_output, inputs, losses, step, log_images, phase, prefix=''):
         if phase == 'train':
-            self.log_batch_statistics('policy_update_actions', torch.abs(self.target_actions_taken), step, phase)
-            self.log_batch_statistics('target_q_values', self.train_target_q_vals, step, phase)
-            self.log_batch_statistics('rewards', self.train_batch_rews, step, phase)
+            self.log_batch_statistics(f'{prefix}policy_update_actions', torch.abs(self.target_actions_taken), step, phase)
+            self.log_batch_statistics(f'{prefix}target_q_values', self.train_target_q_vals, step, phase)
+            self.log_batch_statistics(f'{prefix}rewards', self.train_batch_rews, step, phase)
 
         if hasattr(self, 'log_alpha'):
-            self._logger.log_scalar(self.log_alpha.exp().item(), 'alpha', step, phase)
+            self._logger.log_scalar(self.log_alpha.exp().item(), f'{prefix}alpha', step, phase)
         if log_images:
             self.hm_counter += 1
             self.proxy_ctrl_counter += 1
@@ -636,8 +635,8 @@ class QFunction(BaseModel):
                 torch.cuda.empty_cache()
             heatmaps_vary_curr = np.stack(heatmaps_vary_curr)
             heatmaps_vary_goal = np.stack(heatmaps_vary_goal)
-            self._logger.log_images(heatmaps_vary_curr, 'heatmaps_objects_vary_curr', step, phase)
-            self._logger.log_images(heatmaps_vary_goal, 'heatmaps_objects_vary_goal', step, phase)
+            self._logger.log_images(heatmaps_vary_curr, f'{prefix}heatmaps_objects_vary_curr', step, phase)
+            self._logger.log_images(heatmaps_vary_goal, f'{prefix}heatmaps_objects_vary_goal', step, phase)
 
             heatmaps_vary_curr = []
             heatmaps_vary_goal = []
@@ -667,18 +666,18 @@ class QFunction(BaseModel):
                 torch.cuda.empty_cache()
             heatmaps_vary_curr = np.stack(heatmaps_vary_curr)
             heatmaps_vary_goal = np.stack(heatmaps_vary_goal)
-            self._logger.log_images(heatmaps_vary_curr, 'heatmaps_arm_vary_curr', step, phase)
-            self._logger.log_images(heatmaps_vary_goal, 'heatmaps_arm_vary_goal', step, phase)
+            self._logger.log_images(heatmaps_vary_curr, f'{prefix}heatmaps_arm_vary_curr', step, phase)
+            self._logger.log_images(heatmaps_vary_goal, f'{prefix}heatmaps_arm_vary_goal', step, phase)
 
         if log_images:
             if self._hp.true_negatives:
 
                 self._logger.log_single_tdist_classifier_image(self.pos_pair, self.neg_pair, model_output[:self.pos_bs + self.neg_bs],
-                                                               'tdist{}'.format("Q"), step, phase)
-                self._logger.log_one_ex(self.true_neg_pair, model_output[-self.tn_bs:].data.cpu().numpy(), 'tdist{}'.format("Q"), step, phase, 'true_negatives')
+                                                               '{}tdist{}'.format(prefix, "Q"), step, phase)
+                self._logger.log_one_ex(self.true_neg_pair, model_output[-self.tn_bs:].data.cpu().numpy(), '{}tdist{}'.format(prefix, "Q"), step, phase, 'true_negatives')
             else:
                 self._logger.log_single_tdist_classifier_image(self.image_pairs[:self._hp.batch_size//2], self.image_pairs[self._hp.batch_size//2:], model_output,
-                                                          'tdist{}'.format("Q"), step, phase)
+                                                          '{}tdist{}'.format(prefix, "Q"), step, phase)
 #             self._logger.log_heatmap_image(self.pos_pair, qvals, model_output.squeeze(),
 #                                                           'tdist{}'.format("Q"), step, phase)
 

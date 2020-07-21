@@ -47,7 +47,8 @@ class BaseModel(nn.Module):
             'normalization': 'batch',
             'use_mixup': False,
             'mixup_alpha': 0.4,
-            'spatial_softmax': True
+            'spatial_softmax': True,
+            'use_spectral_norm': False,
         })
 
         # add new params to parent params
@@ -78,7 +79,7 @@ class BaseModel(nn.Module):
 
     def postprocess_params(self):
         self._hp.add_hparam('builder', LayerBuilderParams(
-            self._hp.use_convs, self._hp.use_batchnorm, self._hp.normalization))
+            self._hp.use_convs, self._hp.use_batchnorm, self._hp.normalization, self._hp.use_spectral_norm))
         self._hp.img_sz = self._hp.data_conf['img_sz']
         if self._hp.use_mixup:
             self.mixup_reg = MixupRegularizer(self._hp.mixup_alpha)
