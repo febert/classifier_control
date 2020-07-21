@@ -286,7 +286,7 @@ class QFunction(BaseModel):
 
     def get_arm_state(self, states):
         assert states.shape[-1] > 18, 'State must be full vector to get arm subset'
-        return torch.cat((states[..., :9], states[..., self._hp.state_size:self._hp.state_size+9]), axis=-1)
+        return torch.cat((states[..., :9], states[..., self._hp.state_size//2:self._hp.state_size//2+9]), axis=-1)
 
     def compute_lowdim_reward(self, image_pairs):
         start_im = image_pairs[:, :self._hp.state_size]
