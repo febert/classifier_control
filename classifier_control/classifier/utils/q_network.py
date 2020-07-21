@@ -57,7 +57,7 @@ class QNetwork(torch.nn.Module):
         self.linear4 = Linear(in_dim=ll_size, out_dim=ll_size, builder=self._hp.builder)
 
         self.linear5 = Linear(in_dim=ll_size, out_dim=ll_size, builder=self._hp.builder)
-        self.linear6 = Linear(in_dim=ll_size, out_dim=1, builder=self._hp.builder)
+        self.linear6 = Linear(in_dim=ll_size, out_dim=self.num_outputs, builder=self._hp.builder)
 
     def forward(self, image_pairs, actions):
         if self._hp.resnet:

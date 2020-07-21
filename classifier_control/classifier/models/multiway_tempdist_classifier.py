@@ -32,7 +32,8 @@ class MultiwayTempdistClassifer(BaseModel):
             'use_skips':False, #todo try resnet architecture!
             'ngf': 8,
             'nz_enc': 64,
-            'classifier_restore_path':None  # not really needed here.
+            'classifier_restore_path':None , # not really needed here.
+            'film': False,
         })
 
         # add new params to parent params

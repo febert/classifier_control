@@ -255,18 +255,27 @@ class QFunction(BaseModel):
     def eval_status(self):
         print(f'target_q training: {self.target_qnetwork.training}, target_pi training: {self.target_pi_net.training}')
 
-    def get_max_q(self, image_pairs):
+    def get_best_of_qs(self, qvals):
+        return torch.max(qvals, dim=0)
+
+    def get_max_q(self, image_pairs, return_raw=False):
         """
         :param image_pairs: image pairs (s)
+        :param return_raw: whether or not to return pre-network_out_2_q_val outputs
         :return: max_a Q(s, a)
         """
         if self._hp.optimize_actions == 'random_shooting':
             qs = self.compute_action_samples(image_pairs, self.target_qnetwork, parallel=True, detach_grad=True)
-            max_qs = torch.max((self.network_out_2_qval(qs)), dim=0)[0]
+            max_qs, inds = self.get_best_of_qs(self.network_out_2_qval(qs))
+            if return_raw:
+                max_q_raw_outs = qs[inds, torch.arange(len(inds))]
         elif self.actor_critic:
             with torch.no_grad():
                 best_actions = self.target_pi_net(image_pairs)
-                max_qs = self.network_out_2_qval(self.target_qnetwork(image_pairs, best_actions)).detach()
+                max_q_raw_outs = self.target_qnetwork(image_pairs, best_actions)
+                max_qs = self.network_out_2_qval(max_q_raw_outs).detach()
+        if return_raw:
+            return max_qs, max_q_raw_outs
         return max_qs
 
     @property

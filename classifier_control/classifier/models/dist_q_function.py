@@ -37,36 +37,31 @@ class DistQFunction(QFunction):
         qval = torch.sum((1 + torch.arange(softmax_values.shape[-1])[None]).float().to(self._hp.device) * softmax_values, -1)
         return qval
 
-    def get_max_q(self, qvals):
+    def get_best_of_qs(self, qvals):
         """
         The reason why this function exists is because this operation is a _min_
         for the distributional case, and a max for the standard case
         :param qvals: Tensor of qvalues of dimension [N, Qs]
         :return: tuple of maximum qvalue and max Q index
         """
-        return qvals.min(dim=0)
+        return torch.min(qvals, dim=0)
 
     def get_td_error(self, image_pairs, model_output):
-
-        qval, total_actions = self.get_target_q_samples(image_pairs, get_acts=True)
-        qval = self.network_out_2_qval(qval)
-        ## Select corresponding target Q distribution
-        ids = self.get_max_q(qval)[1]
-        best_actions = total_actions[ids, torch.arange(total_actions.shape[1])]
-        # The above line is equivalent to
-        # best_actions = torch.stack([total_actions[ids[k], k] for k in range(total_actions.shape[1])])
-        qs = self.target_qnetwork(image_pairs, best_actions).detach()
+        target_q_distribution = self.get_max_q(image_pairs, return_raw=True)[1]
 
         ## Shift Q*(s_t+1) to get Q*(s_t)
-        shifted = torch.zeros(qs.size()).to(self._hp.device)
-        shifted[:, 1:] = qs[:, :-1]
-        shifted[:, -1] += qs[:, -1]
-        lb = self.labels.to(self._hp.device).unsqueeze(-1)
-        isg = torch.zeros((self._hp.batch_size * 2, self._hp.num_bins)).to(self._hp.device)
+        shifted = torch.zeros(target_q_distribution.size()).to(self._hp.device)
+        shifted[:, 1:] = target_q_distribution[:, :-1]
+        shifted[:, -1] += target_q_distribution[:, -1]
+        terminal_flag = (self.t1 >= self.tg).type(torch.ByteTensor).to(self._hp.device)[:, None]
+
+        isg = torch.zeros((terminal_flag.shape[0], self._hp.num_bins)).to(self._hp.device)
         isg[:, 0] = 1
 
         ## If next state is goal then target should be 0, else should be shifted
-        target = (lb * isg) + ((1 - lb) * shifted)
+        target = (terminal_flag * isg) + ((1 - terminal_flag) * shifted)
+        self.train_batch_rews = isg
+        self.train_target_q_vals = self.network_out_2_qval(target)
 
         ## KL between target and output
         log_q = self.network_out.clamp(1e-5, 1 - 1e-5).log()
@@ -74,12 +69,30 @@ class DistQFunction(QFunction):
         kl_d = (target * (log_t - log_q)).sum(1).mean()
         return kl_d
 
+    def actor_loss(self):
+        def get_sg_pair(t):
+            if self._hp.low_dim:
+                x = self._hp.state_size
+            else:
+                x = 3
+            return torch.cat((t[:, :x], t[:, 2*x:]), axis=1)
+        image_pairs = get_sg_pair(self.images)
+        self.target_actions_taken = self.pi_net(image_pairs)
+        return self.network_out_2_qval(self.qnetwork(image_pairs, self.target_actions_taken)).mean()
+
+
 
 class DistQFunctionTestTime(DistQFunction):
     def __init__(self, overrideparams, logger=None):
         super(DistQFunctionTestTime, self).__init__(overrideparams, logger)
-        checkpoint = torch.load(self._hp.classifier_restore_path, map_location=self._hp.device)
-        self.load_state_dict(checkpoint['state_dict'])
+        if self._hp.classifier_restore_path is not None:
+            checkpoint = torch.load(self._hp.classifier_restore_path, map_location=self._hp.device)
+            self.load_state_dict(checkpoint['state_dict'])
+            self.target_qnetwork.load_state_dict(self.qnetwork.state_dict())
+            self.target_qnetwork.eval()
+            if self.actor_critic:
+                self.target_pi_net.load_state_dict(self.pi_net.state_dict())
+                self.target_pi_net.eval()
 
     def _default_hparams(self):
         parent_params = super()._default_hparams()
@@ -92,4 +105,4 @@ class DistQFunctionTestTime(DistQFunction):
     def forward(self, inputs):
       qvals = super().forward(inputs)
       ## Qvals represent distance now (lower is better), so directly return cost (no negative needed)
-      return qvals
+      return qvals[:, None]
