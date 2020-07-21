@@ -9,6 +9,8 @@ from torch.optim import Adam
 
 
 class QFunction(BaseModel):
+    INFINITELY_FAR = 1000
+
     def __init__(self, overrideparams, logger=None):
         super().__init__(logger)
         self._hp = self._default_hparams()
@@ -133,7 +135,7 @@ class QFunction(BaseModel):
             'object_rew': False,
             'add_image_mse_rew': False,
             'sum_reward': False,
-            'zero_tn_target': True,
+            'zero_tn_target': False,
             'close_arm_negatives': False,
             'n_step': 1,
             'goal_cql': False,
@@ -155,7 +157,7 @@ class QFunction(BaseModel):
             'log_control_proxy': True,
             'sparse_l2_reward': False,
             'add_arm_hacks': False,
-            'arm_hacks_copy_arm': True,
+            'arm_hacks_type': 'copy_arm', # also rand_arm, batch_goal
         })
 
         # add new params to parent params
@@ -365,19 +367,48 @@ class QFunction(BaseModel):
         curr_bs = self._hp.batch_size
         s_t0 = s_t0.repeat(2, 1) # These two remain unchanged
         s_t1 = s_t1.repeat(2, 1)
-        if self._hp.arm_hacks_copy_arm:
+        if self._hp.arm_hacks_type == 'copy_arm':
             random_obj_poses = torch.FloatTensor(curr_bs, self._hp.state_size// 2 - 9).uniform_(
             -0.2, 0.2).to(self._hp.device)
             hacked_goals = s_tg.clone()
             hacked_goals[:, 9:self._hp.state_size//2] = random_obj_poses
-        else:
+        elif self._hp.arm_hacks_type == 'rand_arm':
+            hacked_goals = s_tg.clone()
+            #random_arm_poses = self.get_random_arm_poses(hacked_goals.shape[0])
+            hacked_goals[:, :9] = torch.roll(s_tg, 1, dims=0)[:, :9]
+        elif self._hp.arm_hacks_type == 'batch_goal':
             hacked_goals = torch.roll(s_tg, 1, dims=0)
+        else:
+            raise NotImplementedError(f'Arm hack type {self._hp.arm_hacks_type} not implemented!')
         s_tg = torch.cat((s_tg, hacked_goals))
         acts = acts.repeat(2, 1)
         t0 = t0.repeat(2)
         t1 = t1.repeat(2)
-        tg = torch.cat((tg, torch.ones(curr_bs).to(self.get_device()).long()*1000))
+        tg = torch.cat((tg, torch.ones(curr_bs).to(self.get_device()).long() * self.INFINITELY_FAR))
         return s_t0, s_t1, s_tg, acts, t0, t1, tg
+
+    def get_random_arm_poses(self, bs):
+        if not hasattr(self, 'env'):
+            if self._hp.state_size == 30:
+                from classifier_control.environments.sim.tabletop.tabletop import Tabletop
+                env = Tabletop
+            elif self._hp.state_size == 22:
+                from classifier_control.environments.sim.tabletop.tabletop_oneobj import TabletopOneObj
+                env = TabletopOneObj
+
+            env_params = {
+                # resolution sufficient for 16x anti-aliasing
+                'viewer_image_height': 192,
+                'viewer_image_width': 256,
+                'textured': True,
+                'render_imgs': False,
+            }
+            self.env = env(env_params)
+
+        poses = []
+        for _ in range(bs):
+            poses.append(self.env.get_jas_at(np.array((0, 0.6, 0.0)) + np.append(np.random.uniform(-0.2, 0.2, size=2), (0,))))
+        return torch.FloatTensor(np.stack(poses)).to(self.get_device())
 
     def sample_image_triplet_actions(self, images, actions, tlen, tdist, states):
 
@@ -498,6 +529,9 @@ class QFunction(BaseModel):
             target = (rew + discount * max_qs * (1 - terminal_flag))  # terminal value
         else:
             target = rew + discount * max_qs
+
+        if self._hp.zero_tn_target:
+            target[self.tg == self.INFINITELY_FAR] = 0
 
         self.train_target_q_vals = target
 

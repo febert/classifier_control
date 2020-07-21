@@ -106,8 +106,6 @@ class ModelTrainer(BaseTrainer):
             self.model_test = build_phase(self._hp.logger, self._hp.model_test, 'test')
 
         self.model.init_optimizers(self._hp)
-
-
         self._hp.mpar = self.model._hp
 
         # TODO clean up resuming

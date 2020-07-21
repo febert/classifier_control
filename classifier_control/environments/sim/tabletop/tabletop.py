@@ -55,6 +55,7 @@ class Tabletop(BaseMujocoEnv, SawyerXYZEnv):
             'verbose': False,
             'difficulty': None,
             'textured': False,
+            'render_imgs': True,
         }
         parent_params = super()._default_hparams()
         for k in default_dict.keys():
@@ -97,8 +98,13 @@ class Tabletop(BaseMujocoEnv, SawyerXYZEnv):
           self.data.set_mocap_quat('mocap', np.array([1, 0, 1, 0]))
           self.do_simulation([-1,1], self.frame_skip)
         rightFinger, leftFinger = self.get_site_pos('rightEndEffector'), self.get_site_pos('leftEndEffector')
-        self.init_fingerCOM  =  (rightFinger + leftFinger)/2
+        self.init_fingerCOM = (rightFinger + leftFinger)/2
         self.pickCompleted = False
+
+    def get_jas_at(self, hand_pos):
+        self.hand_init_pos = hand_pos
+        self._reset_hand()
+        return self.sim.data.qpos.flat.copy()[:9]
 
     def get_site_pos(self, siteName):
         _id = self.model.site_names.index(siteName)
@@ -108,9 +114,14 @@ class Tabletop(BaseMujocoEnv, SawyerXYZEnv):
         self._reset_hand()
 
         if reset_state is not None:
-            target_qpos = reset_state
-            target_qvel = np.zeros_like(self.data.qvel)
+            if len(reset_state) == 15:
+                target_qpos = reset_state
+                target_qvel = np.zeros_like(self.data.qvel)
+            else:
+                target_qpos = reset_state[:len(reset_state)//2]
+                target_qvel = reset_state[len(reset_state) // 2:]
             self.set_state(target_qpos, target_qvel)
+
         else:
             for i in range(3):
                 self.targetobj = i
@@ -143,6 +154,8 @@ class Tabletop(BaseMujocoEnv, SawyerXYZEnv):
         return obs
   
     def render(self):
+        if not self._hp.render_imgs:
+            return np.zeros((1, self._hp.viewer_image_height, self._hp.viewer_image_width, 3))
         return super().render().copy()
 
     def set_goal(self, goal_obj_pose, goal_arm_pose):
@@ -177,9 +190,19 @@ class Tabletop(BaseMujocoEnv, SawyerXYZEnv):
 
     def goal_reached(self):
         og_pos = self._obs_history[0]['qpos']
-        object_dists = self.compute_object_dists(og_pos[9:], self.sim.data.qpos.flat[9:])
+        ob_poses = self.sim.data.qpos.flat[9:15]
+        object_dists = self.compute_object_dists(og_pos[9:], ob_poses)
         #print('max dist', max(object_dists))
-        return max(object_dists) > 0.075
+        # enforce that arm moves away
+        gripper_pos = self.get_endeff_pos()[:2]
+        gripper_pos[1] -= 0.6 # do the weird shift
+        print(f'gripper_pos {gripper_pos}')
+        objects = np.array_split(ob_poses, 3)
+        print(f'objects {objects}')
+        object_arm_dists = [np.linalg.norm(gripper_pos - obj) for obj in objects]
+        print(f'obj arm dist {object_arm_dists}')
+        print(f'obj dist {object_dists}')
+        return max(object_dists) > 0.075 and min(object_arm_dists) > 0.
 
     def _get_obs(self):
         obs = {}
@@ -187,6 +210,8 @@ class Tabletop(BaseMujocoEnv, SawyerXYZEnv):
         obs['qpos'] = copy.deepcopy(self.sim.data.qpos[:].squeeze())
         obs['qvel'] = copy.deepcopy(self.sim.data.qvel[:].squeeze())
         obs['gripper'] = self.get_endeff_pos()
+        obs['state'] = np.concatenate([obs['gripper'], copy.deepcopy(self.sim.data.qpos[:].squeeze()),
+                                        copy.deepcopy(self.sim.data.qvel[:].squeeze())])
         obs['state'] = np.concatenate([copy.deepcopy(self.sim.data.qpos[:].squeeze()),
                                        copy.deepcopy(self.sim.data.qvel[:].squeeze())])
         obs['object_qpos'] = copy.deepcopy(self.sim.data.qpos[9:].squeeze())
@@ -224,6 +249,19 @@ if __name__ == '__main__':
     }
     env = Tabletop(env_params)
     env.reset()
+    #
+    # import pickle
+    # import tqdm
+    # poses = []
+    # for i in tqdm.tqdm(np.linspace(-0.2, 0.2, num=101)):
+    #     for j in np.linspace(0.4, 0.8, num=101):
+    #         env.hand_init_pos = np.array((i, j, 0.0))
+    #         env.reset()
+    #         obs = env._get_obs()
+    #         poses.append(obs['qpos'][:9])
+    # with open('arm_poses.pkl', 'wb') as f:
+    #     pickle.dump(poses, f)
+
     env.targetobj = 2
     init_pos = np.array([
         0,
@@ -244,3 +282,4 @@ if __name__ == '__main__':
         env._set_obj_xyz(env.obj_init_pos)
         img = env.render()[0]
         plt.imsave(f'./examples/im_{i}.png', img)
+        exit()
