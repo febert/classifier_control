@@ -36,9 +36,7 @@ model_config = {
     #'terminal': True,
     #'l2_rew': True,
     #'object_rew_frac': 1.0,
+    'binary_reward': [2, 20],
     'log_control_proxy': False,
     'add_arm_hacks': True,
-    'arm_hacks_type': 'batch_goal',
-    'zero_tn_target': True,
-    #'zero_tn_target': True,
 }
