@@ -6,6 +6,7 @@ from classifier_control.classifier.utils.actor_network import ActorNetwork
 from classifier_control.classifier.utils.general_utils import AttrDict
 from classifier_control.classifier.utils.q_network import QNetwork, AugQNetwork
 from classifier_control.classifier.models.q_function import QFunction
+from classifier_control.classifier.models.dist_q_function import DistQFunction
 from torch.optim import Adam
 import torch.nn as nn
 
@@ -22,7 +23,8 @@ class EnsembleQFunction(QFunction):
 
         q_params = overrideparams.copy()
         q_params.pop('ensemble_count')
-        self.q_functions = nn.ModuleList([QFunction(q_params, logger) for _ in range(self._hp.ensemble_count)])
+        q_fn_type = q_params.pop('q_fn_type')
+        self.q_functions = nn.ModuleList([q_fn_type(q_params, logger) for _ in range(self._hp.ensemble_count)])
         self.proxy_ctrl_counter = 0
         self.hm_counter = 0
 
@@ -57,6 +59,7 @@ class EnsembleQFunction(QFunction):
     def _default_hparams(self):
         default_dict = AttrDict({
             'ensemble_count': 1,
+            'q_fn_type': QFunction,
         })
 
         # add new params to parent params
@@ -88,7 +91,6 @@ class EnsembleQFunction(QFunction):
         else:
             qval = np.stack(model_outputs).min(axis=0)
             return qval
-
 
     def get_max_q(self, image_pairs):
         """

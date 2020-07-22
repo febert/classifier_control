@@ -131,10 +131,11 @@ class QFunction(BaseModel):
             'l2_rew': False,
             'object_rew_frac': 0.0,
             'not_goal_cond': False,
-            'shifted_rew': False, # Use -1 0 reward
+            'binary_reward': [0, 1],
             'object_rew': False,
             'add_image_mse_rew': False,
             'sum_reward': False,
+            'shifted_rew': False, # deprecated
             'zero_tn_target': False,
             'close_arm_negatives': False,
             'n_step': 1,
@@ -412,8 +413,6 @@ class QFunction(BaseModel):
 
     def sample_image_triplet_actions(self, images, actions, tlen, tdist, states):
 
-        #states[states != states] = 0.0 # turn inf values into 0
-
         if self._hp.state_size == 18:
             states = self.get_arm_state(states)
         else:
@@ -502,7 +501,8 @@ class QFunction(BaseModel):
     def get_td_error(self, image_pairs, model_output):
 
         max_qs = self.get_max_q(image_pairs)
-        rew = torch.pow(self._hp.gamma, 1.0 * (self.tg - self.t0 - 1)) * (self.t1 >= self.tg) # Compute discounted return
+        give_reward = (self.t1 >= self.tg).float()
+        rew = give_reward * self._hp.binary_reward[1] + (1-give_reward) * self._hp.binary_reward[0]
 
         terminal_flag = (self.t1 >= self.tg).type(torch.ByteTensor).to(self._hp.device)
 
