@@ -20,10 +20,9 @@ class EnsembleQFunction(QFunction):
         self.postprocess_params()
 
         assert self._hp.batch_size != -1   # make sure that batch size was overridden
-
-        q_params = overrideparams.copy()
+        q_params = self.overrideparams.copy()
         q_params.pop('ensemble_count')
-        q_fn_type = q_params.pop('q_fn_type')
+        q_fn_type = q_params.pop('q_fn_type') if 'q_fn_type' in q_params else QFunction
         self.q_functions = nn.ModuleList([q_fn_type(q_params, logger) for _ in range(self._hp.ensemble_count)])
         self.proxy_ctrl_counter = 0
         self.hm_counter = 0
