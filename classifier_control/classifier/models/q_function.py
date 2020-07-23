@@ -385,7 +385,11 @@ class QFunction(BaseModel):
         acts = acts.repeat(2, 1)
         t0 = t0.repeat(2)
         t1 = t1.repeat(2)
-        tg = torch.cat((tg, torch.ones(curr_bs).to(self.get_device()).long() * self.INFINITELY_FAR))
+        if self._hp.arm_hacks_type in ['copy_arm', 'batch_goal']:
+            tg_prime = torch.ones(curr_bs).to(self.get_device()).long() * self.INFINITELY_FAR
+        elif self._hp.arm_hacks_type == 'rand_arm':
+            tg_prime = tg
+        tg = torch.cat((tg, tg_prime))
         return s_t0, s_t1, s_tg, acts, t0, t1, tg
 
     def get_random_arm_poses(self, bs):
