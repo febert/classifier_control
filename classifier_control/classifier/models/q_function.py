@@ -175,12 +175,14 @@ class QFunction(BaseModel):
         self.qnetwork = q_network_type(self._hp, self.num_network_outputs)
         with torch.no_grad():
             self.target_qnetwork = q_network_type(self._hp, self.num_network_outputs)
+            self.target_qnetwork.load_state_dict(self.qnetwork.state_dict())
             self.target_qnetwork.eval()
 
         if self.actor_critic:
             self.pi_net = ActorNetwork(self._hp)
             with torch.no_grad():
                 self.target_pi_net = ActorNetwork(self._hp)
+                self.target_pi_net.load_state_dict(self.pi_net.state_dict())
                 self.target_pi_net.eval()
 
         self.eval_status()
@@ -335,7 +337,7 @@ class QFunction(BaseModel):
             Sample the distances between the pairs uniformly at random
             """
             distance = torch.randint(1, tlen, (bs,), device=self.get_device(), dtype=torch.long)
-            i0 = torch.LongTensor([np.random.randint(0, tlen-distance[b]) for b in range(bs)]).to(self.get_device())
+            i0 = torch.LongTensor([torch.randint(0, tlen-distance[b], (1,)) for b in range(bs)]).to(self.get_device())
             i1 = i0 + distance
             return i0, i1
         elif sampling_strat == 'uniform_negatives':
@@ -343,7 +345,7 @@ class QFunction(BaseModel):
             Sample the starting state first, then the goal from remaining possibilities. Note this is different from "uniform_pair".
             """
             i0 = torch.randint(0, tlen - 2, (bs,), device=self.get_device(), dtype=torch.long)
-            i1 = torch.LongTensor([np.random.randint(i0[b] + 2, tlen) for b in range(bs)]).to(self.get_device())
+            i1 = torch.LongTensor([torch.randint(i0[b] + 2, tlen, (1,)) for b in range(bs)]).to(self.get_device())
             return torch.min(i0, i1), torch.max(i0, i1)
         elif sampling_strat == 'geometric':
             """
