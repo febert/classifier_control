@@ -687,8 +687,8 @@ class QFunction(BaseModel):
                 image_pairs_flip = torch.cat((goal_state_rep, curr_states), dim=1)
                 max_qs = self.get_max_q(image_pairs).detach().cpu().numpy()
                 max_qs_flip = self.get_max_q(image_pairs_flip).detach().cpu().numpy()
-                heatmaps_vary_curr.append(self.get_heatmap(max_qs, x_range, y_range, slice=(hm_object_center[0]-x_range[0])/(x_range[1]-x_range[0])))
-                heatmaps_vary_goal.append(self.get_heatmap(max_qs_flip, x_range, y_range, slice=(hm_object_center[0]-x_range[0])/(x_range[1]-x_range[0])))
+                heatmaps_vary_curr.append(self.get_heatmap(max_qs, x_range, y_range, frac=(hm_object_center[0]-x_range[0])/(x_range[1]-x_range[0])))
+                heatmaps_vary_goal.append(self.get_heatmap(max_qs_flip, x_range, y_range, frac=(hm_object_center[0]-x_range[0])/(x_range[1]-x_range[0])))
                 del curr_states, image_pairs, max_qs, outer_prod
                 torch.cuda.empty_cache()
             heatmaps_vary_curr = np.stack(heatmaps_vary_curr)
@@ -744,7 +744,7 @@ class QFunction(BaseModel):
         self._logger.log_scalar(torch.median(values).item(), f'{name}_median', step, phase)
         self._logger.log_scalar(torch.std(values).item(), f'{name}_std', step, phase)
 
-    def get_heatmap(self, data, x_range, y_range, side_len=101, slice=0.5):
+    def get_heatmap(self, data, x_range, y_range, side_len=101, frac=0.5):
 
         def linspace_to_slice(min, max, num):
             lsp = np.linspace(min, max, num)
@@ -760,7 +760,7 @@ class QFunction(BaseModel):
         data = np.reshape(data, (side_len, side_len)).copy()
 
         fig, ax = plt.subplots(figsize=(4, 3), dpi=80)
-        plt.plot(np.linspace(y_range[0], y_range[1], num=side_len), data[:, int(data.shape[0]*slice)])
+        plt.plot(np.linspace(y_range[0], y_range[1], num=side_len), data[:, int(data.shape[0]*frac)])
         ax.set(xlabel='obj y pos', ylabel='expected distance')
         fig.canvas.draw()
         slice_image = np.fromstring(fig.canvas.tostring_rgb(), dtype=np.uint8, sep='')
