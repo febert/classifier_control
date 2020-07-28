@@ -8,7 +8,8 @@ class NNIndex:
     dim = 18
     num_samples = 200000
 
-    def __init__(self, dataloader, gpu_id, bs):
+    def __init__(self, dataloader, gpu_id, bs, low_dim):
+        self.low_dim = low_dim
         self.gpu_res = faiss.StandardGpuResources()
         self.index = faiss.IndexIDMap2(faiss.IndexIVFFlat(faiss.IndexFlatL2(self.dim), self.dim, self.nlist))
         if gpu_id == -1:
@@ -25,8 +26,11 @@ class NNIndex:
         res = []
         eeps = []
         for lookup in idx:
+            #pt = self.dataset[lookup//self.T]
             pt = self.cache[lookup]
             res.append(pt)
+            #res.append(pt['states'][lookup%self.T])
+            #eeps.append(pt['gripper'][lookup%self.T])
         return torch.FloatTensor(np.stack(res)).cuda()
 
     def find_knn(self, queries, k=2):
@@ -56,7 +60,10 @@ class NNIndex:
                 #samples.append(arm_states[torch.arange(bs), sampled_times])
                 indices.append(ind)
                 for i in range(bs):
-                    self.cache[ind[i].item()] = batch['states'][i, sample[i]]
+                    if self.low_dim:
+                        self.cache[ind[i].item()] = batch['states'][i, sample[i]]
+                    else:
+                        self.cache[ind[i].item()] = batch['images'][i, sample[i]]
 
         self.samples, self.indices = torch.cat(samples), torch.cat(indices)
         print(f'Training FAISS on {self.samples.shape[0]} points...')

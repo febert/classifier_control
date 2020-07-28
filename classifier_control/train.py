@@ -105,9 +105,9 @@ class ModelTrainer(BaseTrainer):
         if self._hp.model_test is not None:
             self.model_test = build_phase(self._hp.logger, self._hp.model_test, 'test')
 
-        if 'arm_hacks_type' in model_conf and model_conf['arm_hacks_type'] == 'nn_idx':
+        if 'arm_hacks_type' in self.model._hp and self.model._hp.arm_hacks_type == 'nn_idx':
             from classifier_control.classifier.models.utils.nn_idx import NNIndex
-            self.model.nn_idx = self.model_val.nn_idx = NNIndex(self.train_loader, self.args.gpu, self._hp.batch_size)
+            self.model.nn_idx = self.model_val.nn_idx = NNIndex(self.train_loader, self.args.gpu, self._hp.batch_size, self.model._hp.low_dim)
 
         self.model.init_optimizers(self._hp)
         self._hp.mpar = self.model._hp

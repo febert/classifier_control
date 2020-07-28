@@ -366,11 +366,15 @@ class QFunction(BaseModel):
         else:
             assert NotImplementedError(f'Sampling method {sampling_strat} not implemented!')
 
-    def add_arm_hacks(self, s_t0, s_t1, s_tg, acts, t0, t1, tg):
+    def add_arm_hacks(self, s_t0, s_t1, s_tg, query_goal, acts, t0, t1, tg):
         curr_bs = self._hp.batch_size
-        s_t0 = s_t0.repeat(2, 1) # These two remain unchanged
-        s_t1 = s_t1.repeat(2, 1)
+        state_shape = [1] * len(s_t0.shape)
+        state_shape[0] = 2
+        s_t0 = s_t0.repeat(*state_shape) # These two remain unchanged, but tiled in dim 1
+        s_t1 = s_t1.repeat(*state_shape)
+
         if self._hp.arm_hacks_type == 'copy_arm':
+            assert self._hp.lowdim
             random_obj_poses = torch.FloatTensor(curr_bs, self._hp.state_size// 2 - 9).uniform_(
             -0.2, 0.2).to(self._hp.device)
             hacked_goals = s_tg.clone()
@@ -378,10 +382,11 @@ class QFunction(BaseModel):
         elif self._hp.arm_hacks_type == 'nn_idx':
             grip_pos = select_indices(self.inputs.gripper, self.tg)
             #arm_pos_query = self.get_arm_state(s_tg)[..., :9]
-            arm_pos_query = self.get_arm_state(s_tg)
+            arm_pos_query = self.get_arm_state(query_goal)
             close_inds = self.nn_idx.find_knn(arm_pos_query, k=2)[:, 1]
             hacked_goals = self.nn_idx.lookup(close_inds)
         elif self._hp.arm_hacks_type == 'rand_arm':
+            assert self._hp.lowdim
             hacked_goals = s_tg.clone()
             #random_arm_poses = self.get_random_arm_poses(hacked_goals.shape[0])
             hacked_goals[:, :9] = torch.roll(s_tg, 1, dims=0)[:, :9]
@@ -444,7 +449,10 @@ class QFunction(BaseModel):
         self.t0, self.t1, self.tg = t0, t1, tg
 
         if self._hp.add_arm_hacks:
-            s_t0, s_t1, s_tg, acts, t0, t1, tg = self.add_arm_hacks(s_t0, s_t1, s_tg, acts, t0, t1, tg)
+            if self._hp.lowdim:
+                s_t0, s_t1, s_tg, acts, t0, t1, tg = self.add_arm_hacks(s_t0, s_t1, s_tg, s_tg, acts, t0, t1, tg)
+            else:
+                im_t0, im_t1, im_tg, acts, t0, t1, tg = self.add_arm_hacks(im_t0, im_t1, im_tg, s_tg, acts, t0, t1, tg)
             self.t0, self.t1, self.tg = t0, t1, tg
 
         self.image_pairs = torch.stack([im_t0, im_tg], dim=1)
