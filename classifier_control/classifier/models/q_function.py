@@ -374,7 +374,7 @@ class QFunction(BaseModel):
         s_t1 = s_t1.repeat(*state_shape)
 
         if self._hp.arm_hacks_type == 'copy_arm':
-            assert self._hp.lowdim
+            assert self._hp.low_dim
             random_obj_poses = torch.FloatTensor(curr_bs, self._hp.state_size// 2 - 9).uniform_(
             -0.2, 0.2).to(self._hp.device)
             hacked_goals = s_tg.clone()
@@ -386,7 +386,7 @@ class QFunction(BaseModel):
             close_inds = self.nn_idx.find_knn(arm_pos_query, k=2)[:, 1]
             hacked_goals = self.nn_idx.lookup(close_inds)
         elif self._hp.arm_hacks_type == 'rand_arm':
-            assert self._hp.lowdim
+            assert self._hp.low_dim
             hacked_goals = s_tg.clone()
             #random_arm_poses = self.get_random_arm_poses(hacked_goals.shape[0])
             hacked_goals[:, :9] = torch.roll(s_tg, 1, dims=0)[:, :9]
