@@ -449,7 +449,7 @@ class QFunction(BaseModel):
         self.t0, self.t1, self.tg = t0, t1, tg
 
         if self._hp.add_arm_hacks:
-            if self._hp.lowdim:
+            if self._hp.low_dim:
                 s_t0, s_t1, s_tg, acts, t0, t1, tg = self.add_arm_hacks(s_t0, s_t1, s_tg, s_tg, acts, t0, t1, tg)
             else:
                 im_t0, im_t1, im_tg, acts, t0, t1, tg = self.add_arm_hacks(im_t0, im_t1, im_tg, s_tg, acts, t0, t1, tg)
