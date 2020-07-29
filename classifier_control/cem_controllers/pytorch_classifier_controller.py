@@ -48,6 +48,7 @@ class LearnedCostController(CEMBaseController):
 
         predictor_hparams = {}
         predictor_hparams['run_batch_size'] = min(self._hp.vpred_batch_size, self._hp.num_samples)
+
         if self._hp.use_gt_model:
             self.predictor = MujocoPredictor(self.agentparams['env'])
         else:
@@ -81,6 +82,7 @@ class LearnedCostController(CEMBaseController):
         self._goal_image = None
         self._start_image = None
         self._verbose_worker = None
+
 
     def reset(self):
         self._expert_score = None
@@ -123,6 +125,8 @@ class LearnedCostController(CEMBaseController):
         disagree = 0
         ret = [] #indices to return
         true_score_ordering = true_scores.argsort()
+
+        print(f'Score of true best trajectory: {scores_1[true_score_ordering[0]]}')
         for number, i in enumerate(true_score_ordering): # Go through the indices based on how good they actually are
             for j in true_score_ordering[number:]:
                 if i == j:
@@ -136,6 +140,7 @@ class LearnedCostController(CEMBaseController):
                             ret.append((i, j))
                         else:
                             ret.append((j, i))
+                    continue
         num_pairs = total * (total + 1) / 2.0
         return 1.0 * disagree / num_pairs, ret
 
@@ -143,7 +148,8 @@ class LearnedCostController(CEMBaseController):
         previous_actions = np.concatenate([x[None] for x in self._sampler.chosen_actions[-self._net_context:]], axis=0)
         previous_actions = np.tile(previous_actions, [actions.shape[0], 1, 1])
         # input_actions = np.concatenate((previous_actions, actions), axis=1)[:, :self.predictor.sequence_length]
-        goal_state_rep = torch.FloatTensor(self._goal_state).cuda()[None].repeat(actions.shape[0], 1)
+        goal_state_rep = torch.FloatTensor(self._goal_state).cuda()
+        goal_state_rep = goal_state_rep[None].repeat(actions.shape[0], 1)
 
         resampled_imgs = resample_imgs(self._images, self.img_sz)
         last_frames, last_states = get_context(self._net_context, self._t,
@@ -153,12 +159,14 @@ class LearnedCostController(CEMBaseController):
             "context_actions": previous_actions[0],
             "context_states": last_states[0]
         }
+
         prediction_dict = self.predictor(context, {'actions': actions})
         gen_images = prediction_dict['predicted_frames']
         gen_states = prediction_dict['predicted_states']
 
         scores = []
         true_scores = []
+        uncertainties = []
 
         for tpred in range(gen_images.shape[1]):
             input_images = ten2pytrch(gen_images[:, tpred], self.device)
@@ -167,13 +175,20 @@ class LearnedCostController(CEMBaseController):
                         'goal_state': goal_state_rep,
                         'goal_img': uint2pytorch(resample_imgs(self._goal_image, self.img_sz), gen_images.shape[0], self.device)}
             print('peform prediction for ', tpred)
+            score = self.learned_cost.predict(inp_dict)
+            if isinstance(score, list):
+                uncertainty = np.std(np.stack(score), axis=0)
+                uncertainties.append(uncertainty)
+                score = -np.min(np.stack(score), axis=0)
 
-            scores.append(self.learned_cost.predict(inp_dict))
+            scores.append(score)
             true_scores.append(GroundTruthDistController.gt_cost(inp_dict))
 
         # weight final time step by some number and average over time.
         scores = np.stack(scores, 1)
-        scores = self._weight_scores(scores)
+        scores = self._weight_scores(scores).squeeze()
+        if uncertainties:
+            uncertainty_weight = self._weight_scores(np.stack(uncertainties, 1))
 
         true_scores = self._weight_scores(np.stack(true_scores, 1))
         kendall_tau, disagree_inds = self.kendall_tau(scores, true_scores)
@@ -207,15 +222,20 @@ class LearnedCostController(CEMBaseController):
 
             # save scores
             content_dict['scores'] = scores[visualize_indices]
+            if uncertainties:
+                content_dict['uncertainty'] = uncertainty_weight[visualize_indices]
 
             # render disagreeing trajs
             for c in range(self._n_cam):
                 for i, row_name in enumerate(['gt_better', 'learned_better']):
-                    verbose_images = [(gen_images[g_i[i], :] * 255).astype(np.uint8) for g_i in disagree_inds]
+                    verbose_images = [(gen_images[g_i[i]] * 255).astype(np.uint8) for g_i in disagree_inds]
                     verbose_images = [resample_imgs(traj, self._goal_image.shape).squeeze() for traj in verbose_images]
                     row_name = 'cam_{}_{}'.format(c, row_name)
                     content_dict[row_name] = save_gifs_direct(verbose_folder,
                                                               row_name, verbose_images)
+                    content_dict[f'{row_name}_score'] = scores[[g[i] for g in disagree_inds]]
+                    if uncertainties:
+                        content_dict[f'{row_name}_uncertainty'] = uncertainty_weight[[g[i] for g in disagree_inds]]
 
             html_page = fill_template(cem_itr, self._t, content_dict, img_height=self._hp.verbose_img_height)
             save_html_direct("{}/plan.html".format(verbose_folder), html_page)
@@ -223,7 +243,6 @@ class LearnedCostController(CEMBaseController):
             #todo make logger instead of verbose worker !!
 
         return scores
-
 
     def _weight_scores(self, raw_scores):
         scores = raw_scores.copy()
@@ -239,25 +258,35 @@ class LearnedCostController(CEMBaseController):
             scores = scores[:, -1].copy()
         return scores
 
-
     def act(self, t=None, i_tr=None, images=None, goal_image=None, verbose_worker=None, state=None, policy_out=None, goal_obj_pose=None, goal_state=None):
-        self._images = images
+        self._images = np.array(images)
         self._verbose_worker = verbose_worker
-        self._goal_obj_pos = goal_obj_pose
-        self._goal_state = goal_state
+        self._goal_obj_pos = np.array(goal_obj_pose)
+        self._goal_state = np.array(goal_state)
+
         if self.agentparams['T'] - t < self.predictor.horizon:
             self.last_plan = True
         else:
             self.last_plan = False
-
-        ### TEMP: CHEATING
-        #self._oracle_actions = np.concatenate([[x['actions'] for x in policy_out], [np.zeros(4)]*20], axis=0)
 
         ### Support for getting goal images from environment
         if goal_image.shape[0] == 1:
           self._goal_image = goal_image[0]
         else:
           self._goal_image = goal_image[-1, 0]  # pick the last time step as the goal image
+
+        self._goal_image = np.array(self._goal_image)
+
+        # if t == 0:
+        #     d = []
+        #     for i in range(3):
+        #         d.append(np.linalg.norm((self._goal_state - state[-1])[9+2*i:11+2*i]))
+        #
+        #     n = sum([1 if x > 0.005 else 0 for x in d])
+        #     with open('distances.txt', 'a') as f:
+        #         f.write(str(n) + '\n')
+        # return {'actions': np.zeros(4)}
+
         return super(LearnedCostController, self).act(t, i_tr, state)
 
 

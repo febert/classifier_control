@@ -25,6 +25,7 @@ class EnsembleQFunction(QFunction):
         q_fn_type = q_params.pop('q_fn_type') if 'q_fn_type' in q_params else QFunction
         self.q_functions = nn.ModuleList([q_fn_type(q_params, logger) for _ in range(self._hp.ensemble_count)])
         self.proxy_ctrl_counter = 0
+        self.q_fn_type = q_fn_type
         self.hm_counter = 0
 
     def init_optimizers(self, hp):
@@ -81,15 +82,17 @@ class EnsembleQFunction(QFunction):
         """
         #### Train vs Test
         model_outputs = [f(inputs) for f in self.q_functions]
+        if self.q_fn_type == DistQFunction:
+            qval = np.stack(model_outputs).max(axis=0)
+        else:
+            qval = np.stack(model_outputs).min(axis=0)
         if "demo_seq_images" in inputs.keys():
-            qval = torch.stack(model_outputs).min(dim=0)
             return {
                 'qval': qval,
                 'model_outputs': model_outputs
             }
         else:
-            qval = np.stack(model_outputs).min(axis=0)
-            return qval
+            return qval, model_outputs
 
     def get_max_q(self, image_pairs):
         """
@@ -97,7 +100,7 @@ class EnsembleQFunction(QFunction):
         :return: max_a Q(s, a)
         """
         x = [f.get_max_q(image_pairs) for f in self.q_functions]
-        return torch.stack(x).min(dim=0)
+        return torch.stack(x).max(dim=0)
 
     def _log_outputs(self, model_output, inputs, losses, step, log_images, phase, prefix=''):
 
@@ -214,8 +217,11 @@ class EnsembleQFunctionTestTime(EnsembleQFunction):
         pass
       
     def forward(self, inputs):
-        qvals = super().forward(inputs)
-        # Compute the log to get the units to be in timesteps
-        return -qvals
-        #if self._hp.l2_rew or self._hp.shifted_rew:
-        #    return -qvals
+        lamb = 1
+        qvals, model_outs = super().forward(inputs)
+        #return -qvals + lamb * np.std(np.stack(model_outs), axis=0)
+        if self.q_fn_type == DistQFunction:
+            return qvals
+        else:
+            return -qvals
+

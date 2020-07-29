@@ -254,7 +254,7 @@ class QFunction(BaseModel):
                 return qs.detach().cpu().numpy()
 
             qval = self.get_max_q(image_pairs)
-            qval = qval.detach().cpu().numpy()
+            qval = torch.squeeze(qval).detach().cpu().numpy()
         return qval
 
     def eval_status(self):
