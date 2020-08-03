@@ -23,5 +23,5 @@ class ActorNetwork(torch.nn.Module):
         self.mlp.add_module('tanh', torch.nn.Tanh())
 
     def forward(self, image_pairs):
-        embeddings = self.encoder(image_pairs).view(image_pairs.size(0), -1)
+        embeddings = self.encoder(image_pairs).reshape(image_pairs.size(0), -1)
         return self.mlp(embeddings)

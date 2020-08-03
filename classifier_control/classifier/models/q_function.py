@@ -382,7 +382,7 @@ class QFunction(BaseModel):
         elif self._hp.arm_hacks_type == 'nn_idx':
             grip_pos = select_indices(self.inputs.gripper, self.tg)
             #arm_pos_query = self.get_arm_state(s_tg)[..., :9]
-            arm_pos_query = self.get_arm_state(query_goal)
+            arm_pos_query = self.get_arm_state(query_goal)[..., :9]
             close_inds = self.nn_idx.find_knn(arm_pos_query, k=2)[:, 1]
             hacked_goals = self.nn_idx.lookup(close_inds)
         elif self._hp.arm_hacks_type == 'rand_arm':

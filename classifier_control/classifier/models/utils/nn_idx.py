@@ -5,7 +5,7 @@ import torch
 class NNIndex:
 
     nlist = 100
-    dim = 18
+    dim = 9
     num_samples = 200000
 
     def __init__(self, dataloader, gpu_id, bs, low_dim):
@@ -53,8 +53,8 @@ class NNIndex:
 
             for sample in sampled_times:
                 state_size = batch['states'].shape[-1]
-                arm_states = torch.cat((batch['states'][..., :9], batch['states'][..., state_size//2:state_size//2+9]), dim=-1)
-                #arm_states = batch['states'][..., :9]
+                #arm_states = torch.cat((batch['states'][..., :9], batch['states'][..., state_size//2:state_size//2+9]), dim=-1)
+                arm_states = batch['states'][..., :9]
                 samples.append(arm_states[np.arange(bs), sample])
                 ind = batch['index'] * self.T + sample
                 #samples.append(arm_states[torch.arange(bs), sampled_times])
@@ -63,7 +63,7 @@ class NNIndex:
                     if self.low_dim:
                         self.cache[ind[i].item()] = batch['states'][i, sample[i]]
                     else:
-                        self.cache[ind[i].item()] = batch['images'][i, sample[i]]
+                        self.cache[ind[i].item()] = batch['demo_seq_images'][i, sample[i]]
 
         self.samples, self.indices = torch.cat(samples), torch.cat(indices)
         print(f'Training FAISS on {self.samples.shape[0]} points...')
