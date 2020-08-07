@@ -46,12 +46,12 @@ def make_path(exp_dir, conf_path, prefix, make_new_dir):
     return os.path.join(base_path, prefix) if prefix else base_path
 
 
-def set_seeds():
+def set_seeds(seed):
     """Sets all seeds and disables non-determinism in cuDNN backend."""
-    torch.manual_seed(0)
+    torch.manual_seed(seed)
     torch.backends.cudnn.deterministic = True
     torch.backends.cudnn.benchmark = False
-    np.random.seed(0)
+    np.random.seed(seed)
 
 
 class ModelTrainer(BaseTrainer):
@@ -69,7 +69,7 @@ class ModelTrainer(BaseTrainer):
         print('using log dir: ', log_dir)
         
         self.run_testmetrics = args.metric
-        if args.deterministic: set_seeds()
+        if args.deterministic: set_seeds(self._hp.seed)
         
         ## Log
         print('Writing to the experiment directory: {}'.format(self._hp.exp_path))
@@ -226,6 +226,7 @@ class ModelTrainer(BaseTrainer):
             'lr': 1e-3,
             'momentum': 0,      # momentum in RMSProp / SGD optimizer
             'adam_beta': 0.9,       # beta1 param in Adam
+            'seed': 0,
         }
         # add new params to parent params
         parent_params = HParams()
