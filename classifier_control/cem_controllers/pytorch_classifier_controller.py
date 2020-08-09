@@ -64,6 +64,7 @@ class LearnedCostController(CEMBaseController):
         learned_cost_testparams['batch_size'] = self._hp.num_samples
         learned_cost_testparams['data_conf'] = {'img_sz': self.img_sz}  #todo currently uses 64x64!!
         learned_cost_testparams['classifier_restore_path'] = self._hp.learned_cost_model_path
+        learned_cost_testparams['classifier_restore_paths'] = self._hp.learned_cost_model_paths
         self.learned_cost = DistFuncEvaluation(self._hp.learned_cost, learned_cost_testparams)
         self.device = self.learned_cost.model.get_device()
 
@@ -102,6 +103,7 @@ class LearnedCostController(CEMBaseController):
             'verbose_frac_display': 0.,
             'vidpred_model_path': '',
             'learned_cost_model_path': '',
+            'learned_cost_model_paths': [],
             'vpred_batch_size': 200,
             'learned_cost': BaseTempDistClassifierTestTime,
             'use_gt_model': False,
@@ -162,7 +164,10 @@ class LearnedCostController(CEMBaseController):
 
         prediction_dict = self.predictor(context, {'actions': actions})
         gen_images = prediction_dict['predicted_frames']
-        gen_states = prediction_dict['predicted_states']
+        if 'predicted_states' in prediction_dict:
+            gen_states = prediction_dict['predicted_states']
+        else:
+            gen_states = np.zeros((actions.shape[0], gen_images.shape[1], goal_state_rep.shape[-1]))
 
         scores = []
         true_scores = []

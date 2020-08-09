@@ -10,10 +10,12 @@ class DistFuncEvaluation():
         if testmodel is ImageMseCost:
             self.models.append(ImageMseCost())
         else:
-            model_paths = testparams['classifier_restore_path']
+            model_paths = testparams['classifier_restore_paths']
+            model_path = testparams['classifier_restore_path']
 
-            if isinstance(model_paths, list):
-                model_paths = [model_paths]
+            if not model_paths:
+                model_paths = [model_path]
+
             for model_path in model_paths:
                 if model_path is not None and testmodel is not BRLLearnedCost:
                     config_path = '/'.join(str.split(model_path, '/')[:-2]) + '/params.yaml'
@@ -28,6 +30,7 @@ class DistFuncEvaluation():
                 model = testmodel(overrideparams).eval()
                 model.to(torch.device('cuda'))
                 self.models.append(model)
+                self.model = self.models[0]
 
     def predict(self, inputs):
         scores = [model(inputs) for model in self.models]
