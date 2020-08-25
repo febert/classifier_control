@@ -83,13 +83,7 @@ class QFunction(BaseModel):
         return losses
 
     def actor_loss(self):
-        def get_sg_pair(t):
-            if self._hp.low_dim:
-                x = self._hp.state_size
-            else:
-                x = 3
-            return torch.cat((t[:, :x], t[:, 2*x:]), axis=1)
-        image_pairs = get_sg_pair(self.images)
+        image_pairs = self.get_sg_pair(self.images)
         self.target_actions_taken = self.pi_net(image_pairs)
         return -self.network_out_2_qval(self.qnetwork(image_pairs, self.target_actions_taken)).mean()
 
@@ -159,6 +153,9 @@ class QFunction(BaseModel):
             'sparse_l2_reward': False,
             'add_arm_hacks': False,
             'arm_hacks_type': 'copy_arm', # also rand_arm, batch_goal
+            'advantage_learning': False,
+            'advantage_learning_alpha': 0.1,
+            'gaussian_blur': False,
         })
 
         # add new params to parent params
@@ -168,7 +165,7 @@ class QFunction(BaseModel):
         return parent_params
 
     def build_network(self, build_encoder=True):
-        if self._hp.random_crops:
+        if self._hp.random_crops or self._hp.gaussian_blur:
             q_network_type = AugQNetwork
         else:
             q_network_type = QNetwork
@@ -271,14 +268,14 @@ class QFunction(BaseModel):
         """
         if self._hp.optimize_actions == 'random_shooting':
             qs = self.compute_action_samples(image_pairs, self.target_qnetwork, parallel=True, detach_grad=True)
-            max_qs, inds = self.get_best_of_qs(self.network_out_2_qval(qs))
+            max_qs, inds = self.get_best_of_qs(self.network_out_2_qval(qs)).detach()
             if return_raw:
                 max_q_raw_outs = qs[inds, torch.arange(len(inds))]
         elif self.actor_critic:
             with torch.no_grad():
                 best_actions = self.target_pi_net(image_pairs)
                 max_q_raw_outs = self.target_qnetwork(image_pairs, best_actions)
-                max_qs = self.network_out_2_qval(max_q_raw_outs).detach()
+                max_qs = self.network_out_2_qval(max_q_raw_outs)
         if return_raw:
             return max_qs, max_q_raw_outs
         return max_qs
@@ -288,8 +285,12 @@ class QFunction(BaseModel):
         return self._hp.optimize_actions == 'actor_critic'
 
     def get_arm_state(self, states):
-        assert states.shape[-1] > 18, 'State must be full vector to get arm subset'
-        return torch.cat((states[..., :9], states[..., self._hp.state_size//2:self._hp.state_size//2+9]), axis=-1)
+        if states.shape[-1] > 18:
+            return torch.cat((states[..., :9], states[..., self._hp.state_size//2:self._hp.state_size//2+9]), axis=-1)
+        elif states.shape[-1] == 6:
+            return states
+        else:
+            raise NotImplementedError('state shape does not fit expectations')
 
     def compute_lowdim_reward(self, image_pairs):
         start_im = image_pairs[:, :self._hp.state_size]
@@ -380,7 +381,7 @@ class QFunction(BaseModel):
             hacked_goals = s_tg.clone()
             hacked_goals[:, 9:self._hp.state_size//2] = random_obj_poses
         elif self._hp.arm_hacks_type == 'nn_idx':
-            grip_pos = select_indices(self.inputs.gripper, self.tg)
+            #grip_pos = select_indices(self.inputs.gripper, self.tg)
             #arm_pos_query = self.get_arm_state(s_tg)[..., :9]
             arm_pos_query = self.get_arm_state(query_goal)[..., :9]
             close_inds = self.nn_idx.find_knn(arm_pos_query, k=2)[:, 1]
@@ -441,8 +442,11 @@ class QFunction(BaseModel):
         im_t0 = select_indices(images, t0)
         im_t1 = select_indices(images, t1)
         im_tg = select_indices(images, tg)
-        s_t0 = select_indices(states, t0)
-        s_t1 = select_indices(states, t1)
+        if self._hp.low_dim:
+            s_t0 = select_indices(states, t0)
+            s_t1 = select_indices(states, t1)
+        else:
+            s_t0, s_t1 = None, None
         s_tg = select_indices(states, tg)
         acts = select_indices(actions, t0)
 
@@ -567,14 +571,14 @@ class QFunction(BaseModel):
         elif self._hp.td_loss == 'huber':
             return F.smooth_l1_loss(target, model_output)
 
-    def loss(self, model_output):
-        def get_sg_pair(t):
-            if self._hp.low_dim:
-                x = self._hp.state_size
-            else:
-                x = 3
-            return torch.cat((t[:, :x], t[:, 2 * x:]), axis=1)
+    def get_sg_pair(self, t):
+        if self._hp.low_dim:
+            x = self._hp.state_size
+        else:
+            x = 3
+        return torch.cat((t[:, :x], t[:, 2 * x:]), axis=1)
 
+    def loss(self, model_output):
         if self._hp.low_dim:
             image_pairs = self.images[:, self._hp.state_size:]
         else:
@@ -584,7 +588,7 @@ class QFunction(BaseModel):
 
         if self._hp.min_q:
             # Implement minq loss
-            random_q_values = self.network_out_2_qval(self.compute_action_samples(get_sg_pair(self.images), self.qnetwork, parallel=True, detach_grad=False))
+            random_q_values = self.network_out_2_qval(self.compute_action_samples(self.get_sg_pair(self.images), self.qnetwork, parallel=True, detach_grad=False))
             random_density = np.log(0.5 ** self._hp.action_size) # log uniform density
             random_q_values -= random_density
             min_q_loss = torch.logsumexp(random_q_values, dim=0) - np.log(self._hp.est_max_samples)
@@ -597,35 +601,50 @@ class QFunction(BaseModel):
                 states, goals = self.images[:, :self._hp.state_size], self.images[:, 2*self._hp.state_size:]
             else:
                 states, goals = self.images[:, :3], self.images[:, 6:]
-            acts_rep = self.acts.repeat(self.acts.shape[0], 1)
-            state_rep_shape = [1] * len(states.shape)
-            state_rep_shape[0] = states.shape[0]
-            states = states.repeat(*state_rep_shape)
-            goals = torch.repeat_interleave(goals, goals.shape[0], dim=0)
-            outer_prod = torch.cat([states, goals], dim=1)
 
-            if self._hp.energy_fix_type == 2:
-                assert self._hp.sigmoid, 'Need to use sigmoid to use energy fix 2'
-                q_mat = self.qnetwork(outer_prod, acts_rep) # [B^2, 1]
-                q_mat = torch.reshape(q_mat, (self.images.shape[0], self.images.shape[0])) #[Goals, batch]
+            # acts_rep = self.acts.repeat(self.acts.shape[0], 1)
+            # state_rep_shape = [1] * len(states.shape)
+            # state_rep_shape[0] = states.shape[0]
+            # states = states.repeat(*state_rep_shape)
+            # goals = torch.repeat_interleave(goals, goals.shape[0], dim=0)
+            # outer_prod = torch.cat([states, goals], dim=1)
+            #
+            # if self._hp.energy_fix_type == 2:
+            #     assert self._hp.sigmoid, 'Need to use sigmoid to use energy fix 2'
+            #     q_mat = self.qnetwork(outer_prod, acts_rep)  # [B^2, 1]
+            #     q_mat = torch.reshape(q_mat, (self.images.shape[0], self.images.shape[0]))  # [Goals, batch]
+            #
+            #     diags = torch.diag(q_mat)
+            #     # Compute log(sigmoid(x))
+            #     diags = diags - F.softplus(diags)
+            #     lse = torch.log(torch.sum(self.network_out_2_qval(q_mat), dim=0))
+            # else:
+            #     q_mat = self.network_out_2_qval(self.qnetwork(outer_prod, acts_rep))  # [B^2, 1]
+            #     q_mat = torch.reshape(q_mat, (self.images.shape[0], self.images.shape[0]))  # [Goals, batch]
+            #
+            #     diags = torch.diag(q_mat)
+            #     lse = torch.logsumexp(q_mat, dim=0)
 
-                diags = torch.diag(q_mat)
-                # Compute log(sigmoid(x))
-                diags = diags - F.softplus(diags)
-                lse = torch.log(torch.sum(self.network_out_2_qval(q_mat), dim=0))
-            else:
-                q_mat = self.network_out_2_qval(self.qnetwork(outer_prod, acts_rep)) # [B^2, 1]
-                q_mat = torch.reshape(q_mat, (self.images.shape[0], self.images.shape[0])) #[Goals, batch]
+            outer_prod = torch.cat([torch.cat([states, goals], dim=1), torch.cat([states, torch.roll(goals, 1, 0)], dim=1)])
+            acts_rep = self.acts.repeat(2, 1)
+            q_mat = self.network_out_2_qval(self.qnetwork(outer_prod, acts_rep))
 
-                diags = torch.diag(q_mat)
-                lse = torch.logsumexp(q_mat, dim=0)
+            diags = q_mat[:q_mat.shape[0]//2]
+            lse = torch.logsumexp(torch.stack(torch.split(q_mat, q_mat.shape[0]//2)), dim=0)
+            unweighted_gcql_loss = (-diags+lse).mean()
+
+            # outer_prod = torch.cat([torch.cat([states, goals], dim=1), torch.cat([states, torch.roll(goals, 1, 0)], dim=1)])
+            # acts_rep = self.acts.repeat(2, 1)
+            # q_mat = self.network_out_2_qval(self.qnetwork(outer_prod, acts_rep))
+            # labels = torch.cat((torch.ones_like(self.t1), torch.zeros_like(self.t1))).float()
+            # unweighted_gcql_loss = torch.nn.BCEWithLogitsLoss()(q_mat, labels)
 
             if self._hp.goal_cql_lagrange and hasattr(self, 'log_alpha'):
                 goal_cql_weight = torch.clamp(self.log_alpha.exp(), min=0.1, max=2000000.0)
             else:
                 goal_cql_weight = self._hp.goal_cql_weight
 
-            unweighted_gcql_loss = (-diags+lse).mean()
+            # unweighted_gcql_loss = (-diags+lse).mean()
             if self._hp.goal_cql_lagrange:
                 unweighted_gcql_loss -= self._hp.goal_cql_eps
             losses.goal_cql_loss = (goal_cql_weight * unweighted_gcql_loss).squeeze()
@@ -742,7 +761,11 @@ class QFunction(BaseModel):
                                                                '{}tdist{}'.format(prefix, "Q"), step, phase)
                 self._logger.log_one_ex(self.true_neg_pair, model_output[-self.tn_bs:].data.cpu().numpy(), '{}tdist{}'.format(prefix, "Q"), step, phase, 'true_negatives')
             else:
-                self._logger.log_single_tdist_classifier_image(self.image_pairs[:self._hp.batch_size//2], self.image_pairs[self._hp.batch_size//2:], model_output,
+                if self._hp.gaussian_blur:
+                    image_pairs = torch.stack((self.pi_net.transform(self.image_pairs[:, 0]), self.image_pairs[:, 1]), dim=1)
+                else:
+                    image_pairs = self.image_pairs
+                self._logger.log_single_tdist_classifier_image(image_pairs[:self._hp.batch_size//2], image_pairs[self._hp.batch_size//2:], model_output,
                                                           '{}tdist{}'.format(prefix, "Q"), step, phase)
 #             self._logger.log_heatmap_image(self.pos_pair, qvals, model_output.squeeze(),
 #                                                           'tdist{}'.format("Q"), step, phase)
@@ -811,6 +834,8 @@ def select_indices(tensor, indices, batch_offset=0):
 
 class QFunctionTestTime(QFunction):
     def __init__(self, overrideparams, logger=None):
+        if 'gaussian_blur' in overrideparams:
+            overrideparams['gaussian_blur'] = False
         super(QFunctionTestTime, self).__init__(overrideparams, logger)
         if self._hp.classifier_restore_path is not None:
             checkpoint = torch.load(self._hp.classifier_restore_path, map_location=self._hp.device)
