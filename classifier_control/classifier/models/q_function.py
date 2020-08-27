@@ -23,15 +23,16 @@ class QFunction(BaseModel):
         self.build_network()
         self._use_pred_length = False
         self.target_network_counter = 0
+        self.update_pi_counter = 0
         self.hm_counter = 0
         self.proxy_ctrl_counter = 0
 
     def init_optimizers(self, hp):
-        self.critic_optimizer = Adam(self.qnetwork.parameters(), lr=hp.lr)
+        self.critic_optimizer = Adam(self.qnetworks.parameters(), lr=hp.lr)
         self.optimizer = self.critic_optimizer
         if self.actor_critic:
             self.actor_optimizer = Adam(self.pi_net.parameters(), lr=hp.lr)
-        if self._hp.goal_cql_lagrange:
+        if self._hp.goal_cql_lagrange or self._hp.min_q_lagrange:
             self.log_alpha = torch.zeros(1, requires_grad=True, device=self.get_device())
             self.alpha_optimizer = Adam(
                 [self.log_alpha, ],
@@ -45,18 +46,23 @@ class QFunction(BaseModel):
             lagrange_loss = self.goal_cql_lagrange_loss
             lagrange_loss.backward(retain_graph=True)
             self.alpha_optimizer.step()
+        if self._hp.min_q_lagrange:
+            self.alpha_optimizer.zero_grad()
+            lagrange_loss = self.min_q_lagrange_loss
+            lagrange_loss.backward(retain_graph=True)
+            self.alpha_optimizer.step()
         self.critic_optimizer.zero_grad()
         losses.total_loss.backward(retain_graph=self.actor_critic)
         self.critic_optimizer.step()
 
         if self.actor_critic:
-            for p in self.qnetwork.parameters():
+            for p in self.qnetworks.parameters():
                 p.requires_grad = False
             actor_loss = self.actor_loss()
             self.actor_optimizer.zero_grad()
             actor_loss.backward()
             self.actor_optimizer.step()
-            for p in self.qnetwork.parameters():
+            for p in self.qnetworks.parameters():
                 p.requires_grad = True
             losses.actor_loss = actor_loss
 
@@ -66,26 +72,35 @@ class QFunction(BaseModel):
         if self.target_network_counter % self._hp.update_target_rate == 0:
             self.target_network_counter = 0
             if self._hp.target_network_update == 'replace':
-                self.target_qnetwork.load_state_dict(self.qnetwork.state_dict())
-                self.target_qnetwork.eval()
+                self.target_qnetworks.load_state_dict(self.qnetworks.state_dict())
+                self.target_qnetworks.eval()
                 if self.actor_critic:
                     self.target_pi_net.load_state_dict(self.pi_net.state_dict())
                     self.target_pi_net.eval()
             elif self._hp.target_network_update == 'polyak':
                 with torch.no_grad():
-                    for p, p_targ in zip(self.qnetwork.parameters(), self.target_qnetwork.parameters()):
-                        p_targ.data.mul_(self._hp.polyak)
-                        p_targ.data.add_((1 - self._hp.polyak) * p.data)
+                    for q_net, t_q_net in zip(self.qnetworks, self.target_qnetworks):
+                        for p, p_targ in zip(q_net.parameters(), t_q_net.parameters()):
+                            p_targ.data.mul_(self._hp.polyak)
+                            p_targ.data.add_((1 - self._hp.polyak) * p.data)
+                        # Copy over batchnorm statistics
+                        for p, p_targ in zip(q_net.buffers(), t_q_net.buffers()):
+                            p_targ.data.mul_(0)
+                            p_targ.data.add_(p.data)
                     if self.actor_critic:
                         for p, p_targ in zip(self.pi_net.parameters(), self.target_pi_net.parameters()):
                             p_targ.data.mul_(self._hp.polyak)
                             p_targ.data.add_((1 - self._hp.polyak) * p.data)
+                            # Copy over batchnorm statistics
+                        for p, p_targ in zip(self.pi_net.buffers(), self.target_pi_net.buffers()):
+                            p_targ.data.mul_(0)
+                            p_targ.data.add_(p.data)
         return losses
 
     def actor_loss(self):
         image_pairs = self.get_sg_pair(self.images)
         self.target_actions_taken = self.pi_net(image_pairs)
-        return -self.network_out_2_qval(self.qnetwork(image_pairs, self.target_actions_taken)).mean()
+        return -self.network_out_2_qval(self.qnetworks[0](image_pairs, self.target_actions_taken)).mean()
 
     @property
     def num_network_outputs(self):
@@ -118,9 +133,6 @@ class QFunction(BaseModel):
             'num_crops': 2,
             'est_max_samples': 100,
             'fs_goal_prop': 0.0,
-            'rademacher_actions': False,
-            'min_q': False,
-            'min_q_weight': 1.0,
             'true_negatives': False,
             'l2_rew': False,
             'object_rew_frac': 0.0,
@@ -137,6 +149,10 @@ class QFunction(BaseModel):
             'goal_cql_weight': 1.0,
             'goal_cql_eps': 0.1,
             'goal_cql_lagrange': False,
+            'min_q': False,
+            'min_q_weight': 1.0,
+            'min_q_lagrange': False,
+            'min_q_eps': 0.1,
             'sl_loss_weight': 1.0,
             'sl_loss': False,
             'sigmoid': False,
@@ -153,9 +169,9 @@ class QFunction(BaseModel):
             'sparse_l2_reward': False,
             'add_arm_hacks': False,
             'arm_hacks_type': 'copy_arm', # also rand_arm, batch_goal
-            'advantage_learning': False,
-            'advantage_learning_alpha': 0.1,
             'gaussian_blur': False,
+            'twin_critics': False,
+            'add_action_noise': False,
         })
 
         # add new params to parent params
@@ -169,11 +185,13 @@ class QFunction(BaseModel):
             q_network_type = AugQNetwork
         else:
             q_network_type = QNetwork
-        self.qnetwork = q_network_type(self._hp, self.num_network_outputs)
+        num_q_fns = 2 if self._hp.twin_critics else 1
+        self.qnetworks = torch.nn.ModuleList([q_network_type(self._hp, self.num_network_outputs) for _ in range(num_q_fns)])
         with torch.no_grad():
-            self.target_qnetwork = q_network_type(self._hp, self.num_network_outputs)
-            self.target_qnetwork.load_state_dict(self.qnetwork.state_dict())
-            self.target_qnetwork.eval()
+            self.target_qnetworks = torch.nn.ModuleList([q_network_type(self._hp, self.num_network_outputs) for _ in range(num_q_fns)])
+            for i, t_qn in enumerate(self.target_qnetworks):
+                t_qn.load_state_dict(self.qnetworks[i].state_dict())
+                t_qn.eval()
 
         if self.actor_critic:
             self.pi_net = ActorNetwork(self._hp)
@@ -182,13 +200,12 @@ class QFunction(BaseModel):
                 self.target_pi_net.load_state_dict(self.pi_net.state_dict())
                 self.target_pi_net.eval()
 
-        self.eval_status()
-
     def train(self, mode=True):
         super(QFunction, self).train(mode)
         if self.actor_critic:
             self.target_pi_net.eval()
-        self.target_qnetwork.eval()
+        for t_qn in self.target_qnetworks:
+            t_qn.eval()
         return self
 
     def network_out_2_qval(self, network_outputs):
@@ -228,9 +245,9 @@ class QFunction(BaseModel):
 
             image_pairs = torch.cat([image_0, image_g], dim=1)
             self.acts = acts
-            network_out = self.qnetwork(image_pairs, acts)
+            network_out = [qnet(image_pairs, acts) for qnet in self.qnetworks] # Just use the first one if we have two critics
             self.network_out = network_out
-            qval = self.network_out_2_qval(network_out)
+            qval = [self.network_out_2_qval(n_out) for n_out in network_out]
         else:
             if self._hp.low_dim:
                 if self._hp.state_size == 18:
@@ -254,9 +271,6 @@ class QFunction(BaseModel):
             qval = torch.squeeze(qval).detach().cpu().numpy()
         return qval
 
-    def eval_status(self):
-        print(f'target_q training: {self.target_qnetwork.training}, target_pi training: {self.target_pi_net.training}')
-
     def get_best_of_qs(self, qvals):
         return torch.max(qvals, dim=0)
 
@@ -274,8 +288,11 @@ class QFunction(BaseModel):
         elif self.actor_critic:
             with torch.no_grad():
                 best_actions = self.target_pi_net(image_pairs)
-                max_q_raw_outs = self.target_qnetwork(image_pairs, best_actions)
-                max_qs = self.network_out_2_qval(max_q_raw_outs)
+                if self._hp.add_action_noise and self.training:
+                    best_actions += torch.clamp(torch.normal(mean=0, std=0.1, size=best_actions.shape).cuda(), min=-0.2, max=0.2)
+                max_q_raw_outs = [q_net(image_pairs, best_actions) for q_net in self.target_qnetworks]
+                max_qs = [self.network_out_2_qval(raw_outs) for raw_outs in max_q_raw_outs]
+                max_qs, _ = torch.min(torch.stack(max_qs), dim=0)
         if return_raw:
             return max_qs, max_q_raw_outs
         return max_qs
@@ -395,6 +412,10 @@ class QFunction(BaseModel):
             hacked_goals = torch.roll(s_tg, 1, dims=0)
         else:
             raise NotImplementedError(f'Arm hack type {self._hp.arm_hacks_type} not implemented!')
+        import cv2
+        # import ipdb;ipdb.set_trace()
+        # cv2.imwrite('init_goal.png',(np.moveaxis(s_tg[0].detach().cpu().numpy(), 0, 2) + 1) * 255/2)
+        # cv2.imwrite('hacked_goal.png', (np.moveaxis(hacked_goals[0].detach().cpu().numpy(), 0, 2) + 1) * 255/2)
         s_tg = torch.cat((s_tg, hacked_goals))
         acts = acts.repeat(2, 1)
         t0 = t0.repeat(2)
@@ -526,7 +547,6 @@ class QFunction(BaseModel):
             return qs
 
     def get_td_error(self, image_pairs, model_output):
-
         max_qs = self.get_max_q(image_pairs)
         give_reward = (self.t1 >= self.tg).float()
         rew = give_reward * self._hp.binary_reward[1] + (1-give_reward) * self._hp.binary_reward[0]
@@ -565,11 +585,10 @@ class QFunction(BaseModel):
         if self._hp.true_negatives and self._hp.zero_tn_target:
             tn_lb = torch.cat([torch.zeros(self.pos_bs + self.neg_bs), torch.ones(self.tn_bs)]).to(self.get_device())
             target *= (1 - tn_lb)
-
         if self._hp.td_loss == 'mse':
-            return F.mse_loss(target, model_output)
+            return sum([F.mse_loss(target, out) for out in model_output])
         elif self._hp.td_loss == 'huber':
-            return F.smooth_l1_loss(target, model_output)
+            return sum([F.smooth_l1_loss(target, out) for out in model_output])
 
     def get_sg_pair(self, t):
         if self._hp.low_dim:
@@ -588,13 +607,24 @@ class QFunction(BaseModel):
 
         if self._hp.min_q:
             # Implement minq loss
-            random_q_values = self.network_out_2_qval(self.compute_action_samples(self.get_sg_pair(self.images), self.qnetwork, parallel=True, detach_grad=False))
-            random_density = np.log(0.5 ** self._hp.action_size) # log uniform density
-            random_q_values -= random_density
-            min_q_loss = torch.logsumexp(random_q_values, dim=0) - np.log(self._hp.est_max_samples)
-            min_q_loss = min_q_loss.mean()
-            min_q_loss -= model_output.mean()
-            losses.min_q_loss = min_q_loss * self._hp.min_q_weight
+            total_min_q_loss = []
+            self.min_q_lse = 0
+            for i, q_fn in enumerate(self.qnetworks):
+                random_q_values = self.network_out_2_qval(self.compute_action_samples(self.get_sg_pair(self.images), q_fn, parallel=True, detach_grad=False))
+                random_density = np.log(0.5 ** self._hp.action_size) # log uniform density
+                random_q_values -= random_density
+                min_q_loss = torch.logsumexp(random_q_values, dim=0) - np.log(self._hp.est_max_samples)
+                min_q_loss = min_q_loss.mean()
+                self.min_q_lse += min_q_loss
+                total_min_q_loss.append(min_q_loss - model_output[i].sum())
+            total_min_q_loss = torch.stack(total_min_q_loss).sum()
+            if self._hp.min_q_lagrange and hasattr(self, 'log_alpha'):
+                min_q_weight = torch.clamp(self.log_alpha.exp(), min=0.1, max=2000000.0).squeeze() # min_q_weight has dim [1]
+                total_min_q_loss -= self._hp.min_q_eps
+            else:
+                min_q_weight = self._hp.min_q_weight
+            losses.min_q_loss = min_q_weight * total_min_q_loss
+            self.min_q_lagrange_loss = -1 * losses.min_q_loss
 
         if self._hp.goal_cql:
             if self._hp.low_dim:
@@ -665,15 +695,18 @@ class QFunction(BaseModel):
         if 'goal_cql_loss' in losses and not self._hp.goal_cql_lagrange:
             if self._hp.goal_cql_weight > 1e-10:
                 losses.goal_cql_loss /= self._hp.goal_cql_weight # Divide this back out so we can compare log likelihoods
-        if 'min_q_loss' in losses:
-            losses.min_q_loss /= self._hp.min_q_weight # Divide this back out so we can compare log likelihoods
+        #if 'min_q_loss' in losses:
+        #    losses.min_q_loss /= self._hp.min_q_weight # Divide this back out so we can compare log likelihoods
         return losses
 
     def _log_outputs(self, model_output, inputs, losses, step, log_images, phase, prefix=''):
+        model_output = model_output[0] # take first Q fn if multiple
         if phase == 'train':
             self.log_batch_statistics(f'{prefix}policy_update_actions', torch.abs(self.target_actions_taken), step, phase)
             self.log_batch_statistics(f'{prefix}target_q_values', self.train_target_q_vals, step, phase)
+            self.log_batch_statistics(f'{prefix}q_values', model_output, step, phase)
             self.log_batch_statistics(f'{prefix}rewards', self.train_batch_rews, step, phase)
+            self.log_batch_statistics(f'{prefix}min_q_lse', self.min_q_lse, step, phase)
 
         if hasattr(self, 'log_alpha'):
             self._logger.log_scalar(self.log_alpha.exp().item(), f'{prefix}alpha', step, phase)
@@ -835,7 +868,7 @@ def select_indices(tensor, indices, batch_offset=0):
 class QFunctionTestTime(QFunction):
     def __init__(self, overrideparams, logger=None):
         if 'gaussian_blur' in overrideparams:
-            overrideparams['gaussian_blur'] = False
+            overrideparams.pop('gaussian_blur')
         super(QFunctionTestTime, self).__init__(overrideparams, logger)
         if self._hp.classifier_restore_path is not None:
             checkpoint = torch.load(self._hp.classifier_restore_path, map_location=self._hp.device)
