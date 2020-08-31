@@ -33,10 +33,10 @@ class QFunction(BaseModel):
         if self.actor_critic:
             self.actor_optimizer = Adam(self.pi_net.parameters(), lr=hp.lr)
         if self._hp.goal_cql_lagrange or self._hp.min_q_lagrange:
-            self.log_alpha = torch.zeros(1, requires_grad=True, device=self.get_device())
+            self.log_alpha = torch.tensor(0.0, requires_grad=True, device=self.get_device())
             self.alpha_optimizer = Adam(
                 [self.log_alpha, ],
-                lr=hp.lr,
+                lr=1e-3,
             )
 
     def optim_step(self, output):
@@ -616,10 +616,11 @@ class QFunction(BaseModel):
                 min_q_loss = torch.logsumexp(random_q_values, dim=0) - np.log(self._hp.est_max_samples)
                 min_q_loss = min_q_loss.mean()
                 self.min_q_lse += min_q_loss
-                total_min_q_loss.append(min_q_loss - model_output[i].sum())
-            total_min_q_loss = torch.stack(total_min_q_loss).sum()
+                total_min_q_loss.append(min_q_loss - model_output[i].mean())
+            total_min_q_loss = torch.stack(total_min_q_loss).mean()
             if self._hp.min_q_lagrange and hasattr(self, 'log_alpha'):
-                min_q_weight = torch.clamp(self.log_alpha.exp(), min=0.1, max=2000000.0).squeeze() # min_q_weight has dim [1]
+                #min_q_weight = torch.clamp(self.log_alpha.exp(), min=0.1, max=2000000.0).squeeze() # min_q_weight has dim [1]
+                min_q_weight = self.log_alpha.exp().squeeze()
                 total_min_q_loss -= self._hp.min_q_eps
             else:
                 min_q_weight = self._hp.min_q_weight
@@ -695,8 +696,8 @@ class QFunction(BaseModel):
         if 'goal_cql_loss' in losses and not self._hp.goal_cql_lagrange:
             if self._hp.goal_cql_weight > 1e-10:
                 losses.goal_cql_loss /= self._hp.goal_cql_weight # Divide this back out so we can compare log likelihoods
-        #if 'min_q_loss' in losses:
-        #    losses.min_q_loss /= self._hp.min_q_weight # Divide this back out so we can compare log likelihoods
+        if 'min_q_loss' in losses:
+            losses.min_q_loss /= min_q_weight # Divide this back out so we can compare log likelihoods
         return losses
 
     def _log_outputs(self, model_output, inputs, losses, step, log_images, phase, prefix=''):
@@ -798,8 +799,13 @@ class QFunction(BaseModel):
                     image_pairs = torch.stack((self.pi_net.transform(self.image_pairs[:, 0]), self.image_pairs[:, 1]), dim=1)
                 else:
                     image_pairs = self.image_pairs
-                self._logger.log_single_tdist_classifier_image(image_pairs[:self._hp.batch_size//2], image_pairs[self._hp.batch_size//2:], model_output,
+                self._logger.log_single_tdist_classifier_image(image_pairs[:self._hp.batch_size//2], image_pairs[self._hp.batch_size//2:], model_output[:self._hp.batch_size],
                                                           '{}tdist{}'.format(prefix, "Q"), step, phase)
+
+                self._logger.log_single_tdist_classifier_image(image_pairs[self._hp.batch_size:3*self._hp.batch_size // 2],
+                                                               image_pairs[3*self._hp.batch_size // 2:],
+                                                               model_output[self._hp.batch_size:],
+                                                               '{}_arm_hacks_tdist{}'.format(prefix, "Q"), step, phase)
 #             self._logger.log_heatmap_image(self.pos_pair, qvals, model_output.squeeze(),
 #                                                           'tdist{}'.format("Q"), step, phase)
 
@@ -873,8 +879,8 @@ class QFunctionTestTime(QFunction):
         if self._hp.classifier_restore_path is not None:
             checkpoint = torch.load(self._hp.classifier_restore_path, map_location=self._hp.device)
             self.load_state_dict(checkpoint['state_dict'])
-            self.target_qnetwork.load_state_dict(self.qnetwork.state_dict())
-            self.target_qnetwork.eval()
+            self.target_qnetworks.load_state_dict(self.qnetworks.state_dict())
+            self.target_qnetworks.eval()
             if self.actor_critic:
                 self.target_pi_net.load_state_dict(self.pi_net.state_dict())
                 self.target_pi_net.eval()
