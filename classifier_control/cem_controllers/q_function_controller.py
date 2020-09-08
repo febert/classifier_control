@@ -102,41 +102,11 @@ class QFunctionController(Policy):
         input_states = torch.from_numpy(self._states)[None].float().to(self.device).repeat(self._hp.num_samples, 1)
         #goal_img = torch.from_numpy(self._goal_image)[None].float().to(self.device).repeat(self._hp.num_samples, 1, 1, 1)
         goal_img = uint2pytorch(resample_imgs(self._goal_image, self.img_sz), self._hp.num_samples, self.device)
-        actions, scores = [], []
-        for i in range(self._hp.action_sample_batches):
-            #x_values, y_values = np.linspace(-1, 1, 41), np.linspace(-1, 1, 41)
-            #xx, yy = np.meshgrid(x_values, y_values)
-            #xypairs = np.dstack([xx, yy]).reshape(-1, 2)
-            #action_batch = torch.from_numpy(xypairs).float().cuda()
-            action_batch = torch.FloatTensor(input_images.size(0), 4).uniform_(-0.6, 0.6).cuda()
-            inp_dict = {'current_img': input_images,
-                        'current_state': input_states,
-                        'goal_img': goal_img,
-                        'actions': action_batch}
-            actions.append(action_batch.cpu().numpy())
-            scores.append(self.learned_cost.predict(inp_dict))
-        #import ipdb; ipdb.set_trace()
-        scores = np.concatenate(scores)
-        actions = np.concatenate(actions)
-        #print('scores')
-        #print(scores)
-        #print(scores[np.argsort(scores, axis=0)[:10]])
-        #print('actions')
-        #print(actions[np.argsort(scores, axis=0)[:10]])
-        #print('true_act_score')
-        #print(scores[-1])
-        #import matplotlib.pyplot as plt
-        #fig, ax = plt.subplots()
-        #c = ax.pcolormesh(yy, xx, scores.reshape(41, 41)/10.0, cmap='hot')
-        #fig.colorbar(c, ax=ax)
-        #for ind in range(len(actions)):
-        #   plt.scatter(actions[ind, 0], actions[ind, 1], c="red", alpha=max(0, scores[ind]/10.0))
-        #plt.savefig(f'ims/action_dist{t}.png')
-        #plt.close()
-        best_act = actions[np.argmin(scores)]
-        print(f'best act: {best_act}')
-        print(f'highest qval: {np.min(scores)}')
-        return best_act
+        inp_dict = {'current_img': input_images,
+                    'current_state': input_states,
+                    'goal_img': goal_img,}
+        act = self.learned_cost.model.target_pi_net(torch.cat((input_images, goal_img), dim=1))[0].cpu().detach().numpy()
+        return act
 
     def act(self, t=None, i_tr=None, images=None, goal_image=None, verbose_worker=None, state=None):
         self._images = images
