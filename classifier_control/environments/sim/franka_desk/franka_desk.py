@@ -56,26 +56,13 @@ class FrankaDesk(BaseMujocoEnv, SawyerXYZEnv):
             'difficulty': None,
             'textured': False,
             'render_imgs': True,
+            'include_objects': False,
         }
         parent_params = super()._default_hparams()
         for k in default_dict.keys():
           parent_params[k] = default_dict[k]
         return parent_params
   
-    def _set_obj_xyz(self, pos):
-        qpos = self.data.qpos.flat.copy()
-        qvel = self.data.qvel.flat.copy()
-        start_id = 9 + self.targetobj*2
-        qpos[start_id:(start_id+2)] = pos.copy()
-        qvel[start_id:(start_id+2)] = 0
-        self.set_state(qpos, qvel)
-
-    def _set_arm_pos_to_start(self):
-        qpos = self.data.qpos.flat.copy()
-        qvel = self.data.qvel.flat.copy()
-        qpos[:9] = self._obs_history[0]['qpos'][:9].copy()
-        self.set_state(qpos, qvel)
-        return self._get_obs()
   #
   # def sample_goal(self):
   #   start_id = 9 + self.targetobj*2
@@ -110,7 +97,7 @@ class FrankaDesk(BaseMujocoEnv, SawyerXYZEnv):
     def _reset_hand(self, goal=False):
         pos = self.hand_init_pos.copy()
         pos[0] = np.random.uniform(0.2, self.hand_high[0])
-        pos[1] = np.random.uniform(-0.6, self.hand_high[1])
+        pos[1] = np.random.uniform(-0.6, -0.5)
         pos[2] = np.random.uniform(self.hand_low[2], self.hand_high[2])
         for _ in range(20):
           self.data.set_mocap_pos('mocap', pos)
@@ -149,8 +136,8 @@ class FrankaDesk(BaseMujocoEnv, SawyerXYZEnv):
                     self.obj_low,
                     self.obj_high,
                 )
-
-                init_pos = [2, 2, 2]
+                if not self._hp.include_objects:
+                    init_pos = [2, 2, 2]
                 self.obj_init_pos = init_pos
                 self.data.qpos[9+7*i:12+7*i] = init_pos
                 #self._set_obj_xyz(self.obj_init_pos)
@@ -175,6 +162,8 @@ class FrankaDesk(BaseMujocoEnv, SawyerXYZEnv):
         self.update_mocap_pos()
         self.do_simulation([action[-1], -action[-1]], 1)
         obs = self._get_obs()
+        print('current', obs['state'][40])
+        print(self._goal_obj_pose[-1])
         return obs
 
     def update_mocap_pos(self):
@@ -192,34 +181,23 @@ class FrankaDesk(BaseMujocoEnv, SawyerXYZEnv):
         print(f'Setting goals to {goal_obj_pose} and {goal_arm_pose}!')
         super(FrankaDesk, self).set_goal(goal_obj_pose, goal_arm_pose)
 
-    def get_mean_obj_dist(self):
-        distances = self.compute_object_dists(self.sim.data.qpos.flat[9:], self._goal_obj_pose)
-        return np.mean(distances)
-
     def get_distance_score(self):
         """
         :return:  mean of the distances between all objects and goals
         """
-        mean_obj_dist = self.get_mean_obj_dist()
-        # Pretty sure the below is not quite right...
+        curr_drawer_pos = self.sim.data.qpos[-1]
+        goal_drawer_pos = self._goal_obj_pose[-1]
         arm_dist_despos = np.linalg.norm(self._goal_arm_pose - self.sim.data.qpos[:9])
-        print(f'Object distance score is {mean_obj_dist}')
+        drawer_dist = np.abs(curr_drawer_pos-goal_drawer_pos)
+        print(f'Door distance score is {drawer_dist}')
         print(f'Arm joint distance score is {arm_dist_despos}')
         #return arm_dist_despos
-        return mean_obj_dist
+        return drawer_dist
 
     def has_goal(self):
         return True
 
-    def compute_object_dists(self, qpos1, qpos2):
-        distances = []
-        for i in range(3):
-            dist = np.linalg.norm(qpos1[i*2:(i+1)*2] - qpos2[i*2:(i+1)*2])
-            distances.append(dist)
-        return distances
-
     def get_endeff_pos(self):
-        #return self.get_site_pos('end_effector').copy()
         return self.get_body_pos('hand').copy()
 
     def goal_reached(self):
@@ -237,9 +215,6 @@ class FrankaDesk(BaseMujocoEnv, SawyerXYZEnv):
         print(f'obj arm dist {object_arm_dists}')
         print(f'obj dist {object_dists}')
         return np.abs(og_pos[40] - self.sim.data.qpos.flat[40]) > 0.25
-
-    def num_movements(self, dists):
-        return np.count_nonzero(np.array(dists) > 0.01)
 
     def _get_obs(self):
         obs = {}
@@ -329,16 +304,44 @@ if __name__ == '__main__':
     env.reset()
     import pickle
     import cv2
-    for i in range(20):
-        dir = f'/home/stephentian/vmpc_data/classifier_control/data_collection/sim/franka_desk_highcont_noobj_slide_startgoal/raw/traj_group0/traj{i}/'
+    for i in range(100):
+        dir = f'/home/stephentian/vmpc_data/classifier_control/data_collection/sim/franka_desk_highcont_noobj_slide_startgoal_2/raw/traj_group0/traj{i}/'
+        print(i)
         with open(dir + 'obs_dict.pkl', 'rb') as f:
             obs_dict = pickle.load(f)
-        state = obs_dict['state'][0]
+        with open(dir + 'agent_data.pkl', 'rb') as file:
+            agent_data = pickle.load(file)
+        door_center = np.random.uniform(0.10, 0.30)
+        if np.random.random() < 0.5 or door_center > 0.15:
+            door_init, door_final = door_center - 0.15, door_center + 0.15
+        else:
+            door_final, door_init = door_center - 0.15, door_center + 0.15
+        print(door_init, door_final)
         state_final = obs_dict['state'][-1]
-        state_final[:9] = state[:9]
+        state_final[40] = door_final
         env.reset(state_final)
+        env._reset_hand()
+        print(obs_dict['state'][-1][40])
+        obs_dict['state'][-1] = env._get_obs()['state']
+        obs_dict['object_qpos'][-1] = env._get_obs()['object_qpos']
         rend = env.render()[0]
         cv2.imwrite(dir + 'images0/im_30.png', cv2.resize(rend[:, :, ::-1], (64, 64), interpolation=cv2.INTER_AREA))
+        state = obs_dict['state'][-1][:]
+        state[40] = door_init
+        env.reset(state)
+        rend = env.render()[0]
+        print(env._get_obs()['state'][40])
+
+        cv2.imwrite(dir + 'images0/im_0.png', cv2.resize(rend[:, :, ::-1], (64, 64), interpolation=cv2.INTER_AREA))
+        obs_dict['state'][0] = state
+
+        agent_data['reset_state'] = state[:41]
+
+        with open(dir + 'obs_dict.pkl', 'wb') as f:
+            pickle.dump(obs_dict, f)
+        with open(dir + 'agent_data.pkl', 'wb') as file:
+            pickle.dump(agent_data, file)
+
     # imgs = [env.render()[0]]
     # for i in range(30):
     #     act = [0, 0]
