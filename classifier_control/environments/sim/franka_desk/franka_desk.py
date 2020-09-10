@@ -249,6 +249,11 @@ class FrankaDesk(BaseMujocoEnv, SawyerXYZEnv):
     def has_goal(self):
         return True
 
+    def reset_model(self):
+        pass
+
+
+
 
 from moviepy.editor import ImageSequenceClip
 
