@@ -264,7 +264,11 @@ class QFunction(BaseModel):
                 return qs
 
             if 'actions' in inputs:
-                qs = self.target_qnetwork(image_pairs, inputs['actions'])
+                network_out = [qnet(image_pairs, inputs['actions']) for qnet in
+                               self.target_qnetworks]  # Just use the first one if we have two critics
+
+                qval = [self.network_out_2_qval(n_out) for n_out in network_out]
+                qs, _ = self.get_worst_of_qs(torch.stack(qval))
                 return qs.detach().cpu().numpy()
 
             qval = self.get_max_q(image_pairs)
@@ -273,6 +277,9 @@ class QFunction(BaseModel):
 
     def get_best_of_qs(self, qvals):
         return torch.max(qvals, dim=0)
+
+    def get_worst_of_qs(self, qvals):
+        return torch.min(qvals, dim=0)
 
     def get_max_q(self, image_pairs, return_raw=False):
         """
@@ -292,7 +299,8 @@ class QFunction(BaseModel):
                     best_actions += torch.clamp(torch.normal(mean=0, std=0.1, size=best_actions.shape).cuda(), min=-0.2, max=0.2)
                 max_q_raw_outs = [q_net(image_pairs, best_actions) for q_net in self.target_qnetworks]
                 max_qs = [self.network_out_2_qval(raw_outs) for raw_outs in max_q_raw_outs]
-                max_qs, _ = torch.min(torch.stack(max_qs), dim=0)
+                max_qs, inds = self.get_worst_of_qs(torch.stack(max_qs))
+                max_q_raw_outs = torch.stack(max_q_raw_outs)[inds, torch.arange(len(image_pairs))]
         if return_raw:
             return max_qs, max_q_raw_outs
         return max_qs
@@ -597,6 +605,10 @@ class QFunction(BaseModel):
             x = 3
         return torch.cat((t[:, :x], t[:, 2 * x:]), axis=1)
 
+    @property
+    def cql_sign(self):
+        return 1
+
     def loss(self, model_output):
         if self._hp.low_dim:
             image_pairs = self.images[:, self._hp.state_size:]
@@ -617,7 +629,7 @@ class QFunction(BaseModel):
                 min_q_loss = min_q_loss.mean()
                 self.min_q_lse += min_q_loss
                 total_min_q_loss.append(min_q_loss - model_output[i].mean())
-            total_min_q_loss = torch.stack(total_min_q_loss).mean()
+            total_min_q_loss = self.cql_sign * torch.stack(total_min_q_loss).mean()
             if self._hp.min_q_lagrange and hasattr(self, 'log_alpha'):
                 #min_q_weight = torch.clamp(self.log_alpha.exp(), min=0.1, max=2000000.0).squeeze() # min_q_weight has dim [1]
                 min_q_weight = self.log_alpha.exp().squeeze()
@@ -707,7 +719,8 @@ class QFunction(BaseModel):
             self.log_batch_statistics(f'{prefix}target_q_values', self.train_target_q_vals, step, phase)
             self.log_batch_statistics(f'{prefix}q_values', model_output, step, phase)
             self.log_batch_statistics(f'{prefix}rewards', self.train_batch_rews, step, phase)
-            self.log_batch_statistics(f'{prefix}min_q_lse', self.min_q_lse, step, phase)
+            if hasattr(self, 'min_q_lse'):
+                self.log_batch_statistics(f'{prefix}min_q_lse', self.min_q_lse, step, phase)
 
         if hasattr(self, 'log_alpha'):
             self._logger.log_scalar(self.log_alpha.exp().item(), f'{prefix}alpha', step, phase)
@@ -801,11 +814,11 @@ class QFunction(BaseModel):
                     image_pairs = self.image_pairs
                 self._logger.log_single_tdist_classifier_image(image_pairs[:self._hp.batch_size//2], image_pairs[self._hp.batch_size//2:], model_output[:self._hp.batch_size],
                                                           '{}tdist{}'.format(prefix, "Q"), step, phase)
-
-                self._logger.log_single_tdist_classifier_image(image_pairs[self._hp.batch_size:3*self._hp.batch_size // 2],
-                                                               image_pairs[3*self._hp.batch_size // 2:],
-                                                               model_output[self._hp.batch_size:],
-                                                               '{}_arm_hacks_tdist{}'.format(prefix, "Q"), step, phase)
+                if self._hp.add_arm_hacks:
+                    self._logger.log_single_tdist_classifier_image(image_pairs[self._hp.batch_size:3*self._hp.batch_size // 2],
+                                                                   image_pairs[3*self._hp.batch_size // 2:],
+                                                                   model_output[self._hp.batch_size:],
+                                                                   '{}_arm_hacks_tdist{}'.format(prefix, "Q"), step, phase)
 #             self._logger.log_heatmap_image(self.pos_pair, qvals, model_output.squeeze(),
 #                                                           'tdist{}'.format("Q"), step, phase)
 
