@@ -103,10 +103,11 @@ class LearnedCostController(CEMBaseController):
             'verbose_frac_display': 0.,
             'vidpred_model_path': '',
             'learned_cost_model_path': '',
-            'learned_cost_model_paths': [],
+            'learned_cost_model_paths': [''],
             'vpred_batch_size': 200,
             'learned_cost': BaseTempDistClassifierTestTime,
             'use_gt_model': False,
+            'planning_horizon': 100,
         }
         parent_params = super(LearnedCostController, self)._default_hparams()
 
@@ -178,7 +179,7 @@ class LearnedCostController(CEMBaseController):
             inp_dict = {'current_img': input_images,
                         'current_state': torch.FloatTensor(gen_states[:, tpred]).cuda(),
                         'goal_state': goal_state_rep,
-                        'goal_img': uint2pytorch(resample_imgs(self._goal_image, self.img_sz), gen_images.shape[0], self.device)}
+                        'goal_img': uint2pytorch(resample_imgs(self._goal_image, self.img_sz), gen_images.shape[0], self.device),}
             print('peform prediction for ', tpred)
             score = self.learned_cost.predict(inp_dict)
             if isinstance(score, list):
@@ -251,14 +252,17 @@ class LearnedCostController(CEMBaseController):
 
     def _weight_scores(self, raw_scores):
         scores = raw_scores.copy()
+        if len(scores) > self._planning_horizon:
+            # If the model is predicting longer sequences than the planner is actually going to use, truncate
+            scores = scores[:, :self._planning_horizon]
         if self.last_plan:
-            last_step = ((self.agentparams['T'] - self._hp.start_planning) % self.predictor.horizon) - 1
+            last_step = ((self.agentparams['T'] - self._hp.start_planning) % self._planning_horizon) - 1
             for i in range(last_step, scores.shape[1]):
                 scores[:, i] = scores[:, last_step]
 
         if self._hp.finalweight >= 0:
             scores[:, -1] *= self._hp.finalweight
-            scores = np.sum(scores, axis=1) / sum([1. for _ in range(self.predictor.horizon - 1)] + [self._hp.finalweight])
+            scores = np.sum(scores, axis=1) / sum([1. for _ in range(self._planning_horizon - 1)] + [self._hp.finalweight])
         else:
             scores = scores[:, -1].copy()
         return scores
@@ -268,8 +272,10 @@ class LearnedCostController(CEMBaseController):
         self._verbose_worker = verbose_worker
         self._goal_obj_pos = np.array(goal_obj_pose)
         self._goal_state = np.array(goal_state)
+        self._planning_horizon = min(self._hp.planning_horizon, self.predictor.horizon)
 
-        if self.agentparams['T'] - t < self.predictor.horizon:
+
+        if self.agentparams['T'] - t < self._planning_horizon:
             self.last_plan = True
         else:
             self.last_plan = False
@@ -281,16 +287,6 @@ class LearnedCostController(CEMBaseController):
           self._goal_image = goal_image[-1, 0]  # pick the last time step as the goal image
 
         self._goal_image = np.array(self._goal_image)
-
-        # if t == 0:
-        #     d = []
-        #     for i in range(3):
-        #         d.append(np.linalg.norm((self._goal_state - state[-1])[9+2*i:11+2*i]))
-        #
-        #     n = sum([1 if x > 0.005 else 0 for x in d])
-        #     with open('distances.txt', 'a') as f:
-        #         f.write(str(n) + '\n')
-        # return {'actions': np.zeros(4)}
 
         return super(LearnedCostController, self).act(t, i_tr, state)
 
