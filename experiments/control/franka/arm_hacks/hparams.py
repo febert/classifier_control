@@ -7,6 +7,7 @@ from visual_mpc.policy.cem_controllers.samplers.correlated_noise import Correlat
 BASE_DIR = '/'.join(str.split(__file__, '/')[:-1])
 current_dir = os.path.dirname(os.path.realpath(__file__))
 
+from visual_mpc.envs.robot_envs.base_env import BaseRobotEnv 
 from visual_mpc.policy.random.sampler_policy import SamplerPolicy
 from classifier_control.cem_controllers.pytorch_classifier_controller import LearnedCostController
 from classifier_control.classifier.models.tempdist_regressor import TempdistRegressorTestTime
@@ -15,13 +16,25 @@ from classifier_control.classifier.models.q_function import QFunctionTestTime
 
 env_params = {
     # resolution sufficient for 16x anti-aliasing
-
+    #'email_login_creds': '.email_cred',
+    'camera_topics': [IMTopic('/front/image_raw')],
+                      # IMTopic('/left/image_raw')],
+                      # IMTopic('/right_side/image_raw')],
+                      # IMTopic('/left_side/image_raw')],
+                      # IMTopic('/right/image_raw')],
+    'robot_name':'franka',
+    'robot_type':'franka',
+    'gripper_attached':'hand',
+    'cleanup_rate': -1,
+    'duration': 3.5,
+    'reopen':False,
+    'save_video': True
 }
 
 
 agent = {
     'type': BenchmarkAgent,
-    'env': (<Update with Franka Env>, env_params),
+    'env': (BaseRobotEnv, env_params),
     'T': 30,
     'gen_xml': (True, 20),  # whether to generate xml, and how often
     # 'make_final_gif_freq':1,
