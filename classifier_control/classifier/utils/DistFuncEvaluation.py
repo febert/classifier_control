@@ -12,12 +12,8 @@ class DistFuncEvaluation():
         if testmodel is ImageMseCost:
             self.models.append(ImageMseCost())
         else:
-            model_paths = testparams['classifier_restore_paths']
             model_path = testparams['classifier_restore_path']
-
-            if model_paths[0] == '':
-                model_paths = [model_path]
-            testparams.pop('classifier_restore_paths')
+            model_paths = [model_path]
 
             for model_path in model_paths:
                 testparams['classifier_restore_path'] = model_path
