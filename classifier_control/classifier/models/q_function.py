@@ -172,6 +172,7 @@ class QFunction(BaseModel):
             'gaussian_blur': False,
             'twin_critics': False,
             'add_action_noise': False,
+            'action_scaling': 1.0,
         })
 
         # add new params to parent params
