@@ -173,6 +173,7 @@ class QFunction(BaseModel):
             'twin_critics': False,
             'add_action_noise': False,
             'action_scaling': 1.0,
+            'eval_target_nets': False,
         })
 
         # add new params to parent params
