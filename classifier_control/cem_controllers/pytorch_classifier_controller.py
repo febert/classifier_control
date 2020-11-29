@@ -105,6 +105,7 @@ class LearnedCostController(CEMBaseController):
             'vpred_batch_size': 200,
             'learned_cost': BaseTempDistClassifierTestTime,
             'use_gt_model': False,
+            'remote': False,
         }
         parent_params = super(LearnedCostController, self)._default_hparams()
 
@@ -148,8 +149,8 @@ class LearnedCostController(CEMBaseController):
         previous_actions = np.concatenate([x[None] for x in self._sampler.chosen_actions[-self._net_context:]], axis=0)
         previous_actions = np.tile(previous_actions, [actions.shape[0], 1, 1])
         # input_actions = np.concatenate((previous_actions, actions), axis=1)[:, :self.predictor.sequence_length]
-        goal_state_rep = torch.FloatTensor(self._goal_state).cuda()
-        goal_state_rep = goal_state_rep[None].repeat(actions.shape[0], 1)
+        #goal_state_rep = torch.FloatTensor(self._goal_state).cuda()
+        #goal_state_rep = goal_state_rep[None].repeat(actions.shape[0], 1)
 
         resampled_imgs = resample_imgs(self._images, self.img_sz)
         last_frames, last_states = get_context(self._net_context, self._t,
@@ -162,10 +163,10 @@ class LearnedCostController(CEMBaseController):
 
         prediction_dict = self.predictor(context, {'actions': actions})
         gen_images = prediction_dict['predicted_frames']
-        if 'predicted_states' in prediction_dict:
-            gen_states = prediction_dict['predicted_states']
-        else:
-            gen_states = np.zeros((actions.shape[0], gen_images.shape[1], goal_state_rep.shape[-1]))
+        #if 'predicted_states' in prediction_dict:
+        #    gen_states = prediction_dict['predicted_states']
+        #else:
+        gen_states = np.zeros((actions.shape[0], gen_images.shape[1], goal_state_rep.shape[-1]))
 
         scores = []
         true_scores = []
@@ -174,8 +175,8 @@ class LearnedCostController(CEMBaseController):
         for tpred in range(gen_images.shape[1]):
             input_images = ten2pytrch(gen_images[:, tpred], self.device)
             inp_dict = {'current_img': input_images,
-                        'current_state': torch.FloatTensor(gen_states[:, tpred]).cuda(),
-                        'goal_state': goal_state_rep,
+                        #'current_state': torch.FloatTensor(gen_states[:, tpred]).cuda(),
+                        #'goal_state': goal_state_rep,
                         'goal_img': uint2pytorch(resample_imgs(self._goal_image, self.img_sz), gen_images.shape[0], self.device)}
             print('peform prediction for ', tpred)
             score = self.learned_cost.predict(inp_dict)
