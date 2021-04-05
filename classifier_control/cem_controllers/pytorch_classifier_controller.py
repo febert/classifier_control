@@ -65,21 +65,6 @@ class LearnedCostController(CEMBaseController):
         learned_cost_testparams['data_conf'] = {'img_sz': self.img_sz}  #todo currently uses 64x64!!
         learned_cost_testparams['classifier_restore_path'] = self._hp.learned_cost_model_path
         learned_cost_testparams['classifier_restore_paths'] = self._hp.learned_cost_model_paths
-        print(self._hp)
-        print(learned_cost_testparams)
-        from classifier_control.classifier.models.q_function import QFunctionTestTime
-        from classifier_control.classifier.models.latent_space import LatentSpaceTestTime 
-        from classifier_control.classifier.models.tempdist_regressor import TempdistRegressorTestTime 
-        from classifier_control.baseline_costs.image_mse_cost import ImageMseCost
-
-        str_to_cost_map = {
-            'QFunctionTestTime': QFunctionTestTime,
-            'LatentSpaceTestTime': LatentSpaceTestTime,
-            'TempdistRegressorTestTime': TempdistRegressorTestTime,
-            'ImageMseCost': ImageMseCost,
-        }
-
-        self._hp.learned_cost = str_to_cost_map[self._hp.learned_cost]
 
         self.learned_cost = DistFuncEvaluation(self._hp.learned_cost, learned_cost_testparams)
         self.device = self.learned_cost.model.get_device()
@@ -119,7 +104,6 @@ class LearnedCostController(CEMBaseController):
             'verbose_frac_display': 0.,
             'vidpred_model_path': '',
             'learned_cost_model_path': '',
-            'learned_cost_model_paths': [''],
             'vpred_batch_size': 200,
             'learned_cost': 'BaseTempDistClassifierTestTime',
             'use_gt_model': False,
