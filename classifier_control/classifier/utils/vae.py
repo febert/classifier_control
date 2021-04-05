@@ -28,7 +28,7 @@ class VAE(torch.nn.Module):
         return mu + eps*std
       
     def encode(self, image):
-        embeddings = self.encoder(image).view(image.size(0), -1)
+        embeddings = self.encoder(image).reshape(image.size(0), -1)
         e = F.relu(self.linear1(embeddings))
         z =  self.linear2(e) #self.linear6(e)
         mu, logvar = z[:, :self._hp.hidden_size], z[:, self._hp.hidden_size:]

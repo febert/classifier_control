@@ -2,7 +2,6 @@ import yaml
 import numpy as np
 import torch
 from classifier_control.baseline_costs.image_mse_cost import ImageMseCost
-from classifier_control.cem_controllers.brl_learned_cost import BRLLearnedCost
 
 
 class DistFuncEvaluation():
@@ -39,7 +38,7 @@ class DistFuncEvaluation():
 
     def predict(self, inputs):
         scores = [model(inputs) for model in self.models]
-        return np.max(np.stack(scores), axis=0)
+        return np.min(np.stack(scores), axis=0)
 
 
 

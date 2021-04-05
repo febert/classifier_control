@@ -123,9 +123,9 @@ class TempdistRegressor(BaseModel):
         if log_images:
             self._logger.log_pair_predictions(self.img_pair, self.tdist_estimates, self.labels,'tdist_regression', step, phase)
             self.proxy_ctrl_counter += 1
-        if log_images and self.proxy_ctrl_counter == 50:
-            self.proxy_ctrl_counter = 0
-            self.log_control_proxy(lambda inps: TempdistRegressorTestTime.forward(self, inps), step, phase)
+        #if log_images and self.proxy_ctrl_counter == 50:
+            #self.proxy_ctrl_counter = 0
+            #self.log_control_proxy(lambda inps: TempdistRegressorTestTime.forward(self, inps), step, phase)
 
     def loss(self, model_output):
         losses = AttrDict()

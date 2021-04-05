@@ -65,6 +65,22 @@ class LearnedCostController(CEMBaseController):
         learned_cost_testparams['data_conf'] = {'img_sz': self.img_sz}  #todo currently uses 64x64!!
         learned_cost_testparams['classifier_restore_path'] = self._hp.learned_cost_model_path
         learned_cost_testparams['classifier_restore_paths'] = self._hp.learned_cost_model_paths
+        print(self._hp)
+        print(learned_cost_testparams)
+        from classifier_control.classifier.models.q_function import QFunctionTestTime
+        from classifier_control.classifier.models.latent_space import LatentSpaceTestTime 
+        from classifier_control.classifier.models.tempdist_regressor import TempdistRegressorTestTime 
+        from classifier_control.baseline_costs.image_mse_cost import ImageMseCost
+
+        str_to_cost_map = {
+            'QFunctionTestTime': QFunctionTestTime,
+            'LatentSpaceTestTime': LatentSpaceTestTime,
+            'TempdistRegressorTestTime': TempdistRegressorTestTime,
+            'ImageMseCost': ImageMseCost,
+        }
+
+        self._hp.learned_cost = str_to_cost_map[self._hp.learned_cost]
+
         self.learned_cost = DistFuncEvaluation(self._hp.learned_cost, learned_cost_testparams)
         self.device = self.learned_cost.model.get_device()
 
@@ -105,9 +121,10 @@ class LearnedCostController(CEMBaseController):
             'learned_cost_model_path': '',
             'learned_cost_model_paths': [''],
             'vpred_batch_size': 200,
-            'learned_cost': BaseTempDistClassifierTestTime,
+            'learned_cost': 'BaseTempDistClassifierTestTime',
             'use_gt_model': False,
             'planning_horizon': 100,
+            'log_raw_imgs': False,
         }
         parent_params = super(LearnedCostController, self)._default_hparams()
 
@@ -151,7 +168,7 @@ class LearnedCostController(CEMBaseController):
         previous_actions = np.concatenate([x[None] for x in self._sampler.chosen_actions[-self._net_context:]], axis=0)
         previous_actions = np.tile(previous_actions, [actions.shape[0], 1, 1])
         # input_actions = np.concatenate((previous_actions, actions), axis=1)[:, :self.predictor.sequence_length]
-        goal_state_rep = torch.FloatTensor(self._goal_state).cuda()
+        goal_state_rep = torch.FloatTensor(self._goal_state).to(self.device)
         goal_state_rep = goal_state_rep[None].repeat(actions.shape[0], 1)
 
         resampled_imgs = resample_imgs(self._images, self.img_sz)
@@ -177,7 +194,7 @@ class LearnedCostController(CEMBaseController):
         for tpred in range(gen_images.shape[1]):
             input_images = ten2pytrch(gen_images[:, tpred], self.device)
             inp_dict = {'current_img': input_images,
-                        'current_state': torch.FloatTensor(gen_states[:, tpred]).cuda(),
+                        'current_state': torch.FloatTensor(gen_states[:, tpred]).to(self.device),
                         'goal_state': goal_state_rep,
                         'goal_img': uint2pytorch(resample_imgs(self._goal_image, self.img_sz), gen_images.shape[0], self.device),}
             print('peform prediction for ', tpred)
@@ -223,6 +240,10 @@ class LearnedCostController(CEMBaseController):
                 row_name = 'cam_{}_pred_images'.format(c)
                 content_dict[row_name] = save_gifs_direct(verbose_folder,
                                                        row_name, verbose_images)
+                if self._hp.log_raw_imgs:
+                    for i, frames in enumerate(verbose_images):
+                        save_imgs_direct(verbose_folder, '{}_{}_frame'.format(row_name, i), frames, fmt='png')
+
 
             self.learned_cost.model.visualize_test_time(content_dict, visualize_indices, verbose_folder)
 
@@ -240,6 +261,11 @@ class LearnedCostController(CEMBaseController):
                     content_dict[row_name] = save_gifs_direct(verbose_folder,
                                                               row_name, verbose_images)
                     content_dict[f'{row_name}_score'] = scores[[g[i] for g in disagree_inds]]
+
+                    if self._hp.log_raw_imgs:
+                        for j, frames in enumerate(verbose_images):
+                            save_imgs_direct(verbose_folder, '{}_{}_frame'.format(row_name, j), frames, fmt='png')
+
                     if uncertainties:
                         content_dict[f'{row_name}_uncertainty'] = uncertainty_weight[[g[i] for g in disagree_inds]]
 
@@ -252,11 +278,10 @@ class LearnedCostController(CEMBaseController):
 
     def _weight_scores(self, raw_scores):
         scores = raw_scores.copy()
-        if len(scores) > self._planning_horizon:
-            # If the model is predicting longer sequences than the planner is actually going to use, truncate
-            scores = scores[:, :self._planning_horizon]
+        # If the model is predicting longer sequences than the planner is actually going to use, truncate
+        scores = scores[:, :self._planning_horizon]
         if self.last_plan:
-            last_step = ((self.agentparams['T'] - self._hp.start_planning) % self._planning_horizon) - 1
+            last_step = self.agentparams['T'] - self._curr_step - 1
             for i in range(last_step, scores.shape[1]):
                 scores[:, i] = scores[:, last_step]
 
@@ -273,7 +298,7 @@ class LearnedCostController(CEMBaseController):
         self._goal_obj_pos = np.array(goal_obj_pose)
         self._goal_state = np.array(goal_state)
         self._planning_horizon = min(self._hp.planning_horizon, self.predictor.horizon)
-
+        self._curr_step = t
 
         if self.agentparams['T'] - t < self._planning_horizon:
             self.last_plan = True

@@ -24,7 +24,7 @@ class FrankaDesk(BaseMujocoEnv, SawyerXYZEnv):
         _hp = self._default_hparams()
         for name, value in params_dict.items():
             print('setting param {} to value {}'.format(name, value))
-            _hp[name] = value
+            _hp.set_hparam(name, value)
 
         filename = os.path.join(dirname, "./playrooms/rooms/playroom/playroom.xml")
 
@@ -33,6 +33,7 @@ class FrankaDesk(BaseMujocoEnv, SawyerXYZEnv):
                 self,
                 frame_skip=15,
                 action_scale=1./5,
+                #action_scale=1./10,
                 hand_low=hand_low,
                 hand_high=hand_high,
                 model_name=filename
@@ -60,7 +61,7 @@ class FrankaDesk(BaseMujocoEnv, SawyerXYZEnv):
         }
         parent_params = super()._default_hparams()
         for k in default_dict.keys():
-          parent_params[k] = default_dict[k]
+          parent_params.add_hparam(k, default_dict[k])
         return parent_params
   
   #

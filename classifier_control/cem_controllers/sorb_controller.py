@@ -11,6 +11,7 @@ from classifier_control.classifier.models.q_function import QFunctionTestTime
 from classifier_control.classifier.models.dist_q_function import DistQFunctionTestTime
 from classifier_control.classifier.models.gc_bc import GCBCTestTime
 from classifier_control.classifier.datasets.data_loader import FixLenVideoDataset
+from classifier_control.classifier.utils.general_utils import AttrDict
 
 from robonet.video_prediction.testing import VPredEvaluation
 import torch
@@ -148,7 +149,6 @@ class SORBController(Policy):
         return g, images
 
     def get_random_observations(self):
-        from attrdict import AttrDict
         hp = AttrDict(img_sz=(64, 64),
                       sel_len=-1,
                       T=31)
@@ -192,7 +192,7 @@ class SORBController(Policy):
         parent_params = super(SORBController, self)._default_hparams()
 
         for k in default_dict.keys():
-            parent_params[k] = default_dict[k]
+            parent_params.add_hparam(k, default_dict[k])
         return parent_params
 
     def dist_check(self, dist):

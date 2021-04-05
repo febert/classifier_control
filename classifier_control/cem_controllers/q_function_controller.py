@@ -51,6 +51,7 @@ class QFunctionController(Policy):
         learned_cost_testparams['batch_size'] = self._hp.num_samples
         learned_cost_testparams['data_conf'] = {'img_sz': self.img_sz}  #todo currently uses 64x64!!
         learned_cost_testparams['classifier_restore_path'] = self._hp.learned_cost_model_path
+        learned_cost_testparams['classifier_restore_paths'] = ['']
         if self._hp.dist_q:
             self.learned_cost = DistFuncEvaluation(DistQFunctionTestTime, learned_cost_testparams)
         else:
@@ -96,16 +97,36 @@ class QFunctionController(Policy):
         return parent_params
 
     def get_best_action(self, t=None):
+        # resampled_imgs = resample_imgs(self._images, self.img_sz) / 255.
+        # input_images = ten2pytrch(resampled_imgs, self.device)[-1]
+        # input_images = input_images[None].repeat(self._hp.num_samples, 1, 1, 1)
+        # input_states = torch.from_numpy(self._states)[None].float().to(self.device).repeat(self._hp.num_samples, 1)
+        # #goal_img = torch.from_numpy(self._goal_image)[None].float().to(self.device).repeat(self._hp.num_samples, 1, 1, 1)
+        # goal_img = uint2pytorch(resample_imgs(self._goal_image, self.img_sz), self._hp.num_samples, self.device)
+        # inp_dict = {'current_img': input_images,
+        #             'current_state': input_states,
+        #             'goal_img': goal_img,}
+        # act = self.learned_cost.model.target_pi_net(torch.cat((input_images, goal_img), dim=1))[0].cpu().detach().numpy()
         resampled_imgs = resample_imgs(self._images, self.img_sz) / 255.
         input_images = ten2pytrch(resampled_imgs, self.device)[-1]
         input_images = input_images[None].repeat(self._hp.num_samples, 1, 1, 1)
         input_states = torch.from_numpy(self._states)[None].float().to(self.device).repeat(self._hp.num_samples, 1)
         #goal_img = torch.from_numpy(self._goal_image)[None].float().to(self.device).repeat(self._hp.num_samples, 1, 1, 1)
         goal_img = uint2pytorch(resample_imgs(self._goal_image, self.img_sz), self._hp.num_samples, self.device)
-        inp_dict = {'current_img': input_images,
-                    'current_state': input_states,
-                    'goal_img': goal_img,}
-        act = self.learned_cost.model.target_pi_net(torch.cat((input_images, goal_img), dim=1))[0].cpu().detach().numpy()
+
+        try_actions = np.random.uniform(-1, 1, size=(self._hp.num_samples, self._adim))
+        try_actions = np.clip(try_actions, -1, 1)
+        #try_actions[0] = act
+        try_actions_tensor = torch.FloatTensor(try_actions).cuda()
+        inp_dict = {
+                 'current_img':input_images,
+                 'goal_img': goal_img,
+                 'actions': try_actions_tensor
+              }
+        qvalues = self.learned_cost.predict(inp_dict)
+        best_action_ind = np.argmin(qvalues, axis=0)
+        act = try_actions[best_action_ind]
+
         return act
 
     def act(self, t=None, i_tr=None, images=None, goal_image=None, verbose_worker=None, state=None):

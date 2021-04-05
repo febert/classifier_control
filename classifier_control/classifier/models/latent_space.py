@@ -33,7 +33,8 @@ class LatentSpace(BaseModel):
             'nz_enc': 64,
 #             'input_nc':3,
             'classifier_restore_path':None,  # not really needed here.,
-            'hidden_size':256
+            'hidden_size':256,
+            'film': False,
         })
 
         # add new params to parent params

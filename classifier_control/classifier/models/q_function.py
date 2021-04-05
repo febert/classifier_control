@@ -73,10 +73,12 @@ class QFunction(BaseModel):
             self.target_network_counter = 0
             if self._hp.target_network_update == 'replace':
                 self.target_qnetworks.load_state_dict(self.qnetworks.state_dict())
-                self.target_qnetworks.eval()
+                if self._hp.eval_target_nets:
+                    self.target_qnetworks.eval()
                 if self.actor_critic:
                     self.target_pi_net.load_state_dict(self.pi_net.state_dict())
-                    self.target_pi_net.eval()
+                    if self._hp.eval_target_nets:
+                        self.target_pi_net.eval()
             elif self._hp.target_network_update == 'polyak':
                 with torch.no_grad():
                     for q_net, t_q_net in zip(self.qnetworks, self.target_qnetworks):
@@ -172,6 +174,8 @@ class QFunction(BaseModel):
             'gaussian_blur': False,
             'twin_critics': False,
             'add_action_noise': False,
+            'action_scaling': 1.0,
+            'eval_target_nets': True,
         })
 
         # add new params to parent params
@@ -191,21 +195,24 @@ class QFunction(BaseModel):
             self.target_qnetworks = torch.nn.ModuleList([q_network_type(self._hp, self.num_network_outputs) for _ in range(num_q_fns)])
             for i, t_qn in enumerate(self.target_qnetworks):
                 t_qn.load_state_dict(self.qnetworks[i].state_dict())
-                t_qn.eval()
+                if self._hp.eval_target_nets:
+                    t_qn.eval()
 
         if self.actor_critic:
             self.pi_net = ActorNetwork(self._hp)
             with torch.no_grad():
                 self.target_pi_net = ActorNetwork(self._hp)
                 self.target_pi_net.load_state_dict(self.pi_net.state_dict())
-                self.target_pi_net.eval()
+                if self._hp.eval_target_nets:
+                    self.target_pi_net.eval()
 
     def train(self, mode=True):
         super(QFunction, self).train(mode)
-        if self.actor_critic:
-            self.target_pi_net.eval()
-        for t_qn in self.target_qnetworks:
-            t_qn.eval()
+        if self._hp.eval_target_nets:
+            if self.actor_critic:
+                self.target_pi_net.eval()
+            for t_qn in self.target_qnetworks:
+                t_qn.eval()
         return self
 
     def network_out_2_qval(self, network_outputs):
@@ -228,6 +235,7 @@ class QFunction(BaseModel):
         if "demo_seq_images" in inputs.keys():
             tlen = inputs.demo_seq_images.shape[1]
             self.inputs = inputs
+            inputs.actions = inputs.actions * self._hp.action_scaling
             image_pairs, acts = self.sample_image_triplet_actions(inputs.demo_seq_images,
                                                                   inputs.actions, tlen, 1,
                                                                   inputs.states)
@@ -245,7 +253,7 @@ class QFunction(BaseModel):
 
             image_pairs = torch.cat([image_0, image_g], dim=1)
             self.acts = acts
-            network_out = [qnet(image_pairs, acts) for qnet in self.qnetworks] # Just use the first one if we have two critics
+            network_out = [qnet(image_pairs, acts) for qnet in self.qnetworks] 
             self.network_out = network_out
             qval = [self.network_out_2_qval(n_out) for n_out in network_out]
         else:
@@ -288,10 +296,14 @@ class QFunction(BaseModel):
         :return: max_a Q(s, a)
         """
         if self._hp.optimize_actions == 'random_shooting':
-            qs = self.compute_action_samples(image_pairs, self.target_qnetwork, parallel=True, detach_grad=True)
-            max_qs, inds = self.get_best_of_qs(self.network_out_2_qval(qs)).detach()
+            ensem = []
+            for target_qnet in self.target_qnetworks:
+                qs = self.compute_action_samples(image_pairs, target_qnet, parallel=True, detach_grad=True, use_hp=False)
+                max_qs, inds = self.get_best_of_qs(self.network_out_2_qval(qs))
+                ensem.append(max_qs.detach())
+            max_qs, inds = self.get_worst_of_qs(torch.stack(ensem))
             if return_raw:
-                max_q_raw_outs = qs[inds, torch.arange(len(inds))]
+                max_q_raw_outs = max_qs[inds, torch.arange(len(inds))]
         elif self.actor_critic:
             with torch.no_grad():
                 best_actions = self.target_pi_net(image_pairs)
@@ -513,7 +525,7 @@ class QFunction(BaseModel):
             out.append(states[idx//tsteps, idx % tsteps])
         return torch.stack(out, dim=0)
 
-    def compute_action_samples(self, image_pairs, network, parallel=True, return_actions=False, detach_grad=True):
+    def compute_action_samples(self, image_pairs, network, parallel=True, return_actions=False, detach_grad=True, use_hp=True):
         if not parallel:
             qs = []
             actions_l = []
@@ -535,21 +547,22 @@ class QFunction(BaseModel):
                 actions = torch.stack(actions_l)
         else:
             #assert image_pairs.size(0) % self._hp.est_max_samples != 0, 'image pairs should not be duplicated before calling in parallel'
+            num_samps = self._hp.est_max_samples if use_hp else 100
             image_pairs_rep = image_pairs[None]  # Add one dimension
-            repeat_shape = [self._hp.est_max_samples] + [1] * len(image_pairs.shape)
+            repeat_shape = [num_samps] + [1] * len(image_pairs.shape)
             image_pairs_rep = image_pairs_rep.repeat(*repeat_shape)  # [num_samp, B, s_dim]
             image_pairs_rep = image_pairs_rep.view(
-                *[self._hp.est_max_samples * image_pairs.shape[0]] + list(image_pairs_rep.shape[2:]))
+                *[num_samps * image_pairs.shape[0]] + list(image_pairs_rep.shape[2:]))
 
             actions = torch.FloatTensor(image_pairs_rep.size(0), self._hp.action_size).uniform_(
                 *self._hp.action_range).to(self.get_device())
             targetq = network(image_pairs_rep, actions)
             if detach_grad:
                 targetq = targetq.detach()
-            qs = targetq.view(self._hp.est_max_samples, image_pairs.size(0), -1)
+            qs = targetq.view(num_samps, image_pairs.size(0), -1)
 
         if return_actions:
-            actions = actions.view(self._hp.est_max_samples, image_pairs.size(0), -1)
+            actions = actions.view(num_samps, image_pairs.size(0), -1)
             return qs, actions
         else:
             return qs
@@ -715,7 +728,8 @@ class QFunction(BaseModel):
     def _log_outputs(self, model_output, inputs, losses, step, log_images, phase, prefix=''):
         model_output = model_output[0] # take first Q fn if multiple
         if phase == 'train':
-            self.log_batch_statistics(f'{prefix}policy_update_actions', torch.abs(self.target_actions_taken), step, phase)
+            if self._hp.optimize_actions == 'actor_critic':
+                self.log_batch_statistics(f'{prefix}policy_update_actions', torch.abs(self.target_actions_taken), step, phase)
             self.log_batch_statistics(f'{prefix}target_q_values', self.train_target_q_vals, step, phase)
             self.log_batch_statistics(f'{prefix}q_values', model_output, step, phase)
             self.log_batch_statistics(f'{prefix}rewards', self.train_batch_rews, step, phase)
@@ -890,7 +904,7 @@ class QFunctionTestTime(QFunction):
             overrideparams.pop('gaussian_blur')
         super(QFunctionTestTime, self).__init__(overrideparams, logger)
         if self._hp.classifier_restore_path is not None:
-            checkpoint = torch.load(self._hp.classifier_restore_path, map_location=self._hp.device)
+            checkpoint = torch.load(self._hp.classifier_restore_path, map_location=torch.device('cpu'))
             self.load_state_dict(checkpoint['state_dict'])
             self.target_qnetworks.load_state_dict(self.qnetworks.state_dict())
             self.target_qnetworks.eval()

@@ -35,6 +35,7 @@ model_config = {
     'update_target_rate': 500,
     'sg_sample': 'uniform_distance',
     #'terminal': True,
+    'log_control_proxy': False,
     'add_arm_hacks': True,
     'ensemble_count': 3,
 }

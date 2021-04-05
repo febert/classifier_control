@@ -92,6 +92,9 @@ class TabletopOneObj(BaseMujocoEnv, SawyerXYZEnv):
   #   self.goalim = self.render()
   #   self._set_obj_xyz(ogpos)
     
+    def reset_model(self):
+        pass
+    
     def _reset_hand(self, goal=False):
         pos = self.hand_init_pos.copy()
         for _ in range(10):

@@ -23,7 +23,8 @@ class TabletopReacher(BaseMujocoEnv, SawyerXYZEnv):
         _hp = self._default_hparams()
         for name, value in params_dict.items():
             print('setting param {} to value {}'.format(name, value))
-            _hp[name] = value
+            _hp.set_hparam(name, value)
+
 
         if _hp.textured:
             filename = os.path.join(dirname, "assets/sawyer_xyz/sawyer_noobj.xml")
@@ -59,7 +60,8 @@ class TabletopReacher(BaseMujocoEnv, SawyerXYZEnv):
         }
         parent_params = super()._default_hparams()
         for k in default_dict.keys():
-          parent_params[k] = default_dict[k]
+          parent_params.add_hparam(k, default_dict[k])
+
         return parent_params
   
     def _set_obj_xyz(self, pos):
