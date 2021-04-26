@@ -322,9 +322,13 @@ class QFunction(BaseModel):
         return self._hp.optimize_actions == 'actor_critic'
 
     def get_arm_state(self, states):
-        if states.shape[-1] > 18:
+        if states.shape[-1] >= 18:
             return torch.cat((states[..., :9], states[..., self._hp.state_size//2:self._hp.state_size//2+9]), axis=-1)
         elif states.shape[-1] == 6:
+            return states
+        elif states.shape[-1] == 5:
+            return states
+        elif states.shape[-1] == 4:
             return states
         else:
             raise NotImplementedError('state shape does not fit expectations')

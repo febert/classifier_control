@@ -241,3 +241,31 @@ class TdistRegressorLogger(Logger):
 
         # import pdb; pdb.set_trace()
         self._summ_writer.add_image('{}_{}'.format(name, phase), full_image, step)
+
+
+class MultistepDynamicsLogger(Logger):
+    def log_predictions(self, start_img, img_pair, prediction, label,
+                             name, step, phase):
+        # img_pair is the pair of true ending image and predicted ending image
+        image_pairs = img_pair.data.cpu().numpy().squeeze()
+        start_img = start_img.data.cpu().numpy().squeeze()
+
+        zeroth_row = start_img[:self._n_logged_samples]
+        zeroth_row = np.concatenate(unstack(zeroth_row, 0), 2)
+
+        first_row = image_pairs[:, 0]
+        first_row = first_row[:self._n_logged_samples]
+        first_row = np.concatenate(unstack(first_row, 0), 2)
+
+        second_row = image_pairs[:, 1]
+        second_row = second_row[:self._n_logged_samples]
+        second_row = np.concatenate(unstack(second_row, 0), 2)
+
+        pred_row = get_text_row(prediction.data.cpu().numpy().squeeze(), self._n_logged_samples)
+        label_row = get_text_row(label, self._n_logged_samples)
+
+        full_image = (np.concatenate([zeroth_row, first_row, second_row, pred_row, label_row], 1) + 1.)/2.0
+
+        # import pdb; pdb.set_trace()
+        self._summ_writer.add_image('{}_{}'.format(name, phase), full_image, step)
+

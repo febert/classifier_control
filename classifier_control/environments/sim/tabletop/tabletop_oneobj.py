@@ -57,6 +57,7 @@ class TabletopOneObj(BaseMujocoEnv, SawyerXYZEnv):
             'difficulty': None,
             'textured': False,
             'render_imgs': True,
+            'use_arm_metric': False,
         }
         parent_params = super()._default_hparams()
         for k in default_dict.keys():
@@ -171,11 +172,14 @@ class TabletopOneObj(BaseMujocoEnv, SawyerXYZEnv):
         """
         mean_obj_dist = self.get_mean_obj_dist()
         # Pretty sure the below is not quite right...
-        arm_dist_despos = np.linalg.norm(self._goal_arm_pose - self.sim.data.qpos[:9])
+        arm_dist_despos = np.linalg.norm(self._goal_arm_pose - self.get_endeff_pos())
         print(f'Object distance score is {mean_obj_dist}')
         print(f'Arm joint distance score is {arm_dist_despos}')
         #return arm_dist_despos
-        return mean_obj_dist
+        if self._hp.use_arm_metric:
+            return arm_dist_despos
+        else:
+            return mean_obj_dist
 
     def has_goal(self):
         return True

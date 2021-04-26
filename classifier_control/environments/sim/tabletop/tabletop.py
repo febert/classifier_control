@@ -30,6 +30,7 @@ class Tabletop(BaseMujocoEnv, SawyerXYZEnv):
         else:
             filename = os.path.join(dirname, "assets/sawyer_xyz/sawyer_multiobject.xml")
 
+
         BaseMujocoEnv.__init__(self, filename, _hp)
         SawyerXYZEnv.__init__(
                 self,
@@ -39,6 +40,11 @@ class Tabletop(BaseMujocoEnv, SawyerXYZEnv):
                 hand_high=hand_high,
                 model_name=filename
             )
+
+        if _hp.randomize_object_colors:
+            from mujoco_py.modder import TextureModder
+            self.texture_modder = TextureModder(self.sim)
+
         goal_low = self.hand_low
         goal_high = self.hand_high
         self._adim = 4
@@ -56,6 +62,7 @@ class Tabletop(BaseMujocoEnv, SawyerXYZEnv):
             'difficulty': None,
             'textured': False,
             'render_imgs': True,
+            'randomize_object_colors': False,
         }
         parent_params = super()._default_hparams()
         for k in default_dict.keys():
@@ -90,11 +97,11 @@ class Tabletop(BaseMujocoEnv, SawyerXYZEnv):
   #   self._set_obj_xyz(goal_pos)
   #   self.goalim = self.render()
   #   self._set_obj_xyz(ogpos)
-    def reset_model(self):
-        pass
-
+    
     def _reset_hand(self, goal=False):
         pos = self.hand_init_pos.copy()
+        #pos[0] += np.random.uniform(-0.2, 0.2, 1)
+        #pos[1] += np.random.uniform(-0.2, 0.2, 1)
         for _ in range(10):
           self.data.set_mocap_pos('mocap', pos)
           self.data.set_mocap_quat('mocap', np.array([1, 0, 1, 0]))
@@ -103,19 +110,17 @@ class Tabletop(BaseMujocoEnv, SawyerXYZEnv):
         self.init_fingerCOM = (rightFinger + leftFinger)/2
         self.pickCompleted = False
 
-    def get_jas_at(self, hand_pos):
-        self.hand_init_pos = hand_pos
-        self._reset_hand()
-        return self.sim.data.qpos.flat.copy()[:9]
-
     def get_site_pos(self, siteName):
         _id = self.model.site_names.index(siteName)
         return self.data.site_xpos[_id].copy()
 
     def reset(self, reset_state=None):
         self._reset_hand()
-
         if reset_state is not None:
+            if self._hp.randomize_object_colors:
+                colors = reset_state[1]
+                self.set_object_colors(colors)
+                reset_state = reset_state[0]
             if len(reset_state) == 15:
                 target_qpos = reset_state
                 target_qvel = np.zeros_like(self.data.qvel)
@@ -123,8 +128,9 @@ class Tabletop(BaseMujocoEnv, SawyerXYZEnv):
                 target_qpos = reset_state[:len(reset_state)//2]
                 target_qvel = reset_state[len(reset_state) // 2:]
             self.set_state(target_qpos, target_qvel)
-
         else:
+            if self._hp.randomize_object_colors:
+                self.randomize_obj_colors()
             for i in range(3):
                 self.targetobj = i
                 init_pos = np.random.uniform(
@@ -146,7 +152,31 @@ class Tabletop(BaseMujocoEnv, SawyerXYZEnv):
         self._reset_eval()
 
         #Can try changing this
-        return o, self.sim.data.qpos.flat.copy()
+        if self._hp.randomize_object_colors:
+            return o, (self.sim.data.qpos.flat.copy(), self.get_object_colors())
+        else:
+            return o, self.sim.data.qpos.flat.copy()
+
+        #return o, None
+
+    def randomize_obj_colors(self):
+        assert self._hp.randomize_object_colors, 'Only randomize object colors when they are being randomized!'
+        colors = self.texture_modder.get_rand_rgb(3)
+        self.set_object_colors(colors)
+
+    def set_object_colors(self, colors):
+        assert self._hp.randomize_object_colors, 'Only set object colors when they are being randomized!'
+        for i in range(3):
+            self.texture_modder.set_rgb('objGeom{}'.format(i), colors[i])
+
+    def get_object_colors(self):
+        assert self._hp.randomize_object_colors, 'Only get object colors when they are being randomized!'
+        colors = []
+        for i in range(3):
+            bmp = self.texture_modder.get_texture('objGeom{}'.format(i)).bitmap
+            color = bmp[0, 0, :]
+            colors.append(color)
+        return colors
 
     def step(self, action):
         self.set_xyz_action(action[:3])
@@ -174,9 +204,9 @@ class Tabletop(BaseMujocoEnv, SawyerXYZEnv):
         """
         mean_obj_dist = self.get_mean_obj_dist()
         # Pretty sure the below is not quite right...
-        arm_dist_despos = np.linalg.norm(self._goal_arm_pose - self.sim.data.qpos[:9])
+        #arm_dist_despos = np.linalg.norm(self._goal_arm_pose - self.sim.data.qpos[:9])
         print(f'Object distance score is {mean_obj_dist}')
-        print(f'Arm joint distance score is {arm_dist_despos}')
+        #print(f'Arm joint distance score is {arm_dist_despos}')
         #return arm_dist_despos
         return mean_obj_dist
 
@@ -204,7 +234,13 @@ class Tabletop(BaseMujocoEnv, SawyerXYZEnv):
         object_arm_dists = [np.linalg.norm(gripper_pos - obj) for obj in objects]
         print(f'obj arm dist {object_arm_dists}')
         print(f'obj dist {object_dists}')
-        return max(object_dists) > 0.075 and min(object_arm_dists) > 0.
+        #return max(object_dists) > 0.075
+        return max(object_dists) > 0.075 and self.num_movements(object_dists) == 1 and \
+               not np.any([object_arm_dist < 0.125 and object_dist > 0.075 for
+                           object_arm_dist, object_dist in zip(object_arm_dists, object_dists)])
+
+    def num_movements(self, dists):
+        return np.count_nonzero(np.array(dists) > 0.01)
 
     def _get_obs(self):
         obs = {}
@@ -213,7 +249,7 @@ class Tabletop(BaseMujocoEnv, SawyerXYZEnv):
         obs['qvel'] = copy.deepcopy(self.sim.data.qvel[:].squeeze())
         obs['gripper'] = self.get_endeff_pos()
         obs['state'] = np.concatenate([obs['gripper'], copy.deepcopy(self.sim.data.qpos[:].squeeze()),
-                                        copy.deepcopy(self.sim.data.qvel[:].squeeze())])
+                                         copy.deepcopy(self.sim.data.qvel[:].squeeze())])
         obs['state'] = np.concatenate([copy.deepcopy(self.sim.data.qpos[:].squeeze()),
                                        copy.deepcopy(self.sim.data.qvel[:].squeeze())])
         obs['object_qpos'] = copy.deepcopy(self.sim.data.qpos[9:].squeeze())
@@ -239,13 +275,16 @@ class Tabletop(BaseMujocoEnv, SawyerXYZEnv):
     def has_goal(self):
         return True
 
+    def reset_model(self, a):
+        pass
+
 
    
 if __name__ == '__main__':
     env_params = {
       # resolution sufficient for 16x anti-aliasing
-      'viewer_image_height': 192,
-      'viewer_image_width': 256,
+      'viewer_image_height': 192*2,
+      'viewer_image_width': 256*2,
       'textured': True
       #     'difficulty': 'm',
     }
@@ -263,15 +302,22 @@ if __name__ == '__main__':
     #         poses.append(obs['qpos'][:9])
     # with open('arm_poses.pkl', 'wb') as f:
     #     pickle.dump(poses, f)
+    init_poses = [[-0.2, 0.1], [0.14, -0.08], [0.1, 0.14]]
+    for i in range(3):
+        env.targetobj = i
+        env.obj_init_pos = np.array(init_poses[i])
+        env._set_obj_xyz(env.obj_init_pos)
 
-    env.targetobj = 2
-    init_pos = np.array([
-        0,
-        0.2
-    ])
-    env.obj_init_pos = init_pos
-    env._set_obj_xyz(env.obj_init_pos)
+
+    import matplotlib.pyplot as plt
+    img = env.render()[0][:, 30:-30]
+    plt.imsave(f'./sample.png', img)
+    for i in range(100):
+        env.step([-1, -1, 0, 0])
+
+    print(env.sim.data.qpos[:9])
     import ipdb; ipdb.set_trace()
+
 
     import matplotlib.pyplot as plt
     for i, coord in enumerate(np.linspace(-0.1, 0.1, 21)):

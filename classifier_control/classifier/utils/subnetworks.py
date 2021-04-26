@@ -61,8 +61,8 @@ class FiLM(nn.Module):
     def forward(self, feats, inp):
         gb = self.linear(inp)
         gamma, beta = gb[:, :self.feature_size], gb[:, self.feature_size:]
-        gamma = gamma.view(feats.size(0), feats.size(1), 1, 1)
-        beta = beta.view(feats.size(0), feats.size(1), 1, 1)
+        gamma = gamma.view(feats.size(0), feats.size(1))
+        beta = beta.view(feats.size(0), feats.size(1))
         return feats * gamma + beta
 
 
@@ -125,7 +125,7 @@ class ConvDecoder(nn.Module):
         self.net = GetIntermediatesSequential(hp.skips_stride) if hp.use_skips else nn.Sequential()
 
 #         print('l-1: indim {} outdim {}'.format(64, hp./))
-        self.net.add_module('head', nn.ConvTranspose2d(64, 32, 4))
+        self.net.add_module('head', nn.ConvTranspose2d(self._hp.nz_enc, 32, 4))
         
         
         for i in range(self.n - 3):
@@ -133,6 +133,14 @@ class ConvDecoder(nn.Module):
             self.net.add_module('pyramid-{}'.format(i),
                                 ConvBlockDec(in_dim=filters_in, out_dim=filters_in // 2, normalize=hp.builder.normalize,
                                              builder=hp.builder))
+            if hasattr(self._hp, 'fixed_dim_convs') and self._hp.fixed_dim_convs > 0:
+                for j in range(self._hp.fixed_dim_convs):
+                    self.net.add_module('pyramid-{}-fixed-{}'.format(i, j),
+                                        ConvBlockDec(in_dim=filters_in // 2, out_dim=filters_in // 2,
+                                                     normalize=hp.builder.normalize,
+                                                     builder=hp.builder, stride=1, padding=1, kernel_size=3))
+
+
             print('l{}: indim {} outdim {}'.format(i, filters_in, filters_in // 2))
             
             
