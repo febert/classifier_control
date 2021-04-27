@@ -49,6 +49,7 @@ class MultistepDynamics(BaseModel):
             'tv_weight': 0.0,
             'random_crops': False,
             'cross_enc_dec_residual': False,
+            'geom_sample_p': 0.3,
         })
 
         # add new params to parent params
@@ -136,6 +137,7 @@ class MultistepDynamics(BaseModel):
         tlen = inputs.demo_seq_images.shape[1]
 #         print(inputs.demo_seq_images.min(), inputs.demo_seq_images.max(), "*****")
         batch_images = inputs.demo_seq_images
+        bs = inputs.demo_seq_images.shape[0]
         if self._hp.fixed_k == 0:
             # get random lengths of k
             k = torch.from_numpy(np.array(np.random.randint(1, self._hp.max_t))).to(self.get_device())
@@ -143,7 +145,13 @@ class MultistepDynamics(BaseModel):
             # If fixed k is specified, always use it
             k = torch.from_numpy(np.array(self._hp.fixed_k)).to(self.get_device())
 
-        t0 = np.random.randint(0, tlen - k.cpu() - 1, self._hp.batch_size)
+        dist = torch.distributions.geometric.Geometric(self._hp.geom_sample_p).sample((bs,)).to(self.get_device()).long()+ 1
+        dist = torch.clamp(dist, min=0, max=tlen - k - 1)
+        # print(dist)
+        # print(k)
+        # print(tlen-k.cpu()-dist.cpu())
+
+        t0 = np.random.randint(0, tlen - k.cpu() - dist.cpu(), self._hp.batch_size)
         k = k.repeat(batch_images.shape[0])
         t0 = torch.from_numpy(t0).to(self.get_device())
         batch_actions = inputs.actions
@@ -153,12 +161,19 @@ class MultistepDynamics(BaseModel):
         actions = torch.stack(actions, dim=0)
         start_images = select_indices(batch_images, t0)
         end_images = select_indices(batch_images, t0 + k)
+        self.consistency_goals = select_indices(batch_images, t0 + k + dist)
+        self.consistency_s_t1= select_indices(batch_images, t0 + k + 1)
+        self.consistency_actions = select_indices(batch_actions, t0 + k)
+        self.consistency_t0 = t0+k
+        self.consistency_t1 = t0+k+1
+        self.consistency_tg = t0+k+dist
         if self._hp.random_crops:
             start_images, end_images = self.transform(start_images), self.transform(end_images)
         self.true_images = end_images
         self.pred = self.predict(start_images, actions, k)
         self.start_images = start_images
         self.pairs = torch.stack((self.true_images, (self.pred * 2 - 1)), dim=1)
+        self.k = k
         return self.pred, k
 
     def sample_image_triplet_actions(self, images, actions, tlen, tdist, states):
@@ -230,7 +245,7 @@ class MultistepDynamics(BaseModel):
     
     def _log_outputs(self, model_output, inputs, losses, step, log_images, phase):
         if log_images:
-            self._logger.log_predictions(self.start_images, self.pairs, model_output[1].squeeze(), model_output[1].squeeze(),
+            self._logger.log_predictions(self.start_images, self.pairs, self.k.squeeze(), self.k.squeeze(),
                                                           'multistep_preds', step, phase)
 
     def get_device(self):

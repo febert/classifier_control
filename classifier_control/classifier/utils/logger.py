@@ -269,3 +269,30 @@ class MultistepDynamicsLogger(Logger):
         # import pdb; pdb.set_trace()
         self._summ_writer.add_image('{}_{}'.format(name, phase), full_image, step)
 
+    def log_single_tdist_classifier_image(self, pos_pair, neg_pair, out_sigmoid,
+                                                  name, step, phase):
+        self.log_one_ex(pos_pair, out_sigmoid[:out_sigmoid.shape[0]//2].data.cpu().numpy(), name, step, phase, 'positives')
+        self.log_one_ex(neg_pair, out_sigmoid[out_sigmoid.shape[0]//2:].data.cpu().numpy(), name, step, phase, 'negatives')
+
+    def log_one_ex(self, pair, out_sigmoid, name, step, phase, tag):
+
+        pair = pair.data.cpu().numpy().squeeze()
+        pred = out_sigmoid
+
+        def image_row(image_pairs, scores, _n_logged_samples):
+
+            first_row = image_pairs[:, 0]
+            first_row = first_row[:_n_logged_samples]
+            first_row = np.concatenate(unstack(first_row, 0), 2)
+
+            second_row = image_pairs[:, 1]
+            second_row = second_row[:_n_logged_samples]
+            second_row = np.concatenate(unstack(second_row, 0), 2)
+
+            numbers = get_text_row(scores, _n_logged_samples, shape=(30, image_pairs[0, 0].shape[1]))
+
+            return (np.concatenate([first_row, second_row, numbers], 1) + 1.)/2.0
+
+        image = image_row(pair, pred, self._n_logged_samples)
+        # import pdb; pdb.set_trace()
+        self._summ_writer.add_image('{}_{}_{}'.format(name, tag, phase), image, step)

@@ -39,8 +39,8 @@ class QFunction(BaseModel):
                 lr=1e-3,
             )
 
-    def optim_step(self, output):
-        losses = self.loss(output)
+    def optim_step(self, output, losses, keep_graph=False):
+        #losses = self.loss(output)
         if self._hp.goal_cql_lagrange:
             self.alpha_optimizer.zero_grad()
             lagrange_loss = self.goal_cql_lagrange_loss
@@ -52,7 +52,7 @@ class QFunction(BaseModel):
             lagrange_loss.backward(retain_graph=True)
             self.alpha_optimizer.step()
         self.critic_optimizer.zero_grad()
-        losses.total_loss.backward(retain_graph=self.actor_critic)
+        losses.total_loss.backward(retain_graph=self.actor_critic or keep_graph)
         self.critic_optimizer.step()
 
         if self.actor_critic:
@@ -60,7 +60,7 @@ class QFunction(BaseModel):
                 p.requires_grad = False
             actor_loss = self.actor_loss()
             self.actor_optimizer.zero_grad()
-            actor_loss.backward()
+            actor_loss.backward(retain_graph=keep_graph)
             self.actor_optimizer.step()
             for p in self.qnetworks.parameters():
                 p.requires_grad = True
@@ -224,7 +224,7 @@ class QFunction(BaseModel):
             network_outputs = F.sigmoid(network_outputs)
         return network_outputs.squeeze()
 
-    def forward(self, inputs):
+    def forward(self, inputs, extra_training_inputs=None):
         """
         forward pass at training time
         :param
@@ -239,7 +239,16 @@ class QFunction(BaseModel):
             image_pairs, acts = self.sample_image_triplet_actions(inputs.demo_seq_images,
                                                                   inputs.actions, tlen, 1,
                                                                   inputs.states)
+
             self.images = image_pairs
+            self.acts = acts
+
+            if extra_training_inputs:
+                self.images = torch.cat([self.images, extra_training_inputs['images']], dim=0)
+                self.acts = torch.cat([self.acts, extra_training_inputs['actions']], dim=0)
+                self.t0 = torch.cat([self.t0, extra_training_inputs['t0']], dim=0)
+                self.t1 = torch.cat([self.t1, extra_training_inputs['t1']], dim=0)
+                self.tg = torch.cat([self.tg, extra_training_inputs['tg']], dim=0)
 
             if self._hp.low_dim:
                 if self._hp.not_goal_cond:
@@ -252,8 +261,7 @@ class QFunction(BaseModel):
                 image_g = self.images[:, 6:]
 
             image_pairs = torch.cat([image_0, image_g], dim=1)
-            self.acts = acts
-            network_out = [qnet(image_pairs, acts) for qnet in self.qnetworks] 
+            network_out = [qnet(image_pairs, self.acts) for qnet in self.qnetworks]
             self.network_out = network_out
             qval = [self.network_out_2_qval(n_out) for n_out in network_out]
         else:
@@ -394,7 +402,7 @@ class QFunction(BaseModel):
             Sample the first index, and then sample the second according to a geometric distribution with parameter p 
             """
             i0 = torch.randint(0, tlen-1, (bs,), device=self.get_device(), dtype=torch.long)
-            dist = torch.distributions.geometric.Geometric(self._hp.geom_sample_p).sample((bs,)).to(self.get_device()).long()
+            dist = torch.distributions.geometric.Geometric(self._hp.geom_sample_p).sample((bs,)).to(self.get_device()).long() + 1
             return i0, torch.clamp(i0+dist, max=tlen-1)
         elif sampling_strat == 'half_unif_half_first':
             """
@@ -834,16 +842,22 @@ class QFunction(BaseModel):
                                                           '{}tdist{}'.format(prefix, "Q"), step, phase)
                 if self._hp.add_arm_hacks:
                     self._logger.log_single_tdist_classifier_image(image_pairs[self._hp.batch_size:3*self._hp.batch_size // 2],
-                                                                   image_pairs[3*self._hp.batch_size // 2:],
-                                                                   model_output[self._hp.batch_size:],
+                                                                   image_pairs[3*self._hp.batch_size // 2: self._hp.batch_size * 2],
+                                                                   model_output[self._hp.batch_size:self._hp.batch_size*2],
                                                                    '{}_arm_hacks_tdist{}'.format(prefix, "Q"), step, phase)
+                if image_pairs.shape[0] == self._hp.batch_size * 3:
+                    self._logger.log_single_tdist_classifier_image(image_pairs[self._hp.batch_size * 2:5 * self._hp.batch_size // 2],
+                        image_pairs[5 * self._hp.batch_size // 2:],
+                        model_output[self._hp.batch_size * 2:],
+                        '{}_predicted_pairs_{}'.format(prefix, "Q"), step, phase)
 #             self._logger.log_heatmap_image(self.pos_pair, qvals, model_output.squeeze(),
 #                                                           'tdist{}'.format("Q"), step, phase)
 
     def log_batch_statistics(self, name, values, step, phase):
-        self._logger.log_scalar(torch.mean(values).item(), f'{name}_mean', step, phase)
-        self._logger.log_scalar(torch.median(values).item(), f'{name}_median', step, phase)
-        self._logger.log_scalar(torch.std(values).item(), f'{name}_std', step, phase)
+        self._logger.log_scalar(torch.mean(values).item(), f'{name}/mean', step, phase)
+        self._logger.log_scalar(torch.median(values).item(), f'{name}/median', step, phase)
+        if values.ndim != 0: #Don't log std for scalars
+            self._logger.log_scalar(torch.std(values).item(), f'{name}/std', step, phase)
 
     def get_heatmap(self, data, x_range, y_range, side_len=101, frac=0.5):
 

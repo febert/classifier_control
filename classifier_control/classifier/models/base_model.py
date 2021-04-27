@@ -87,8 +87,7 @@ class BaseModel(nn.Module):
     def init_optimizers(self, hp):
         self.optimizer = Adam(self.parameters(), lr=hp.lr)
 
-    def optim_step(self, output):
-        losses = self.loss(output)
+    def optim_step(self, output, losses):
         self.optimizer.zero_grad()
         losses.total_loss.backward()
         self.optimizer.step()
@@ -114,9 +113,12 @@ class BaseModel(nn.Module):
             if hasattr(module, '_log_outputs'):
                 module._log_outputs(model_output, inputs, losses, step, log_images, phase)
 
-    def _log_losses(self, losses, step, phase):
+    def _log_losses(self, losses, step, phase, prefix=''):
         for name, loss in losses.items():
-            self._logger.log_scalar(loss, name, step, phase)
+            if isinstance(loss, AttrDict):
+                self._log_losses(loss, step, phase, prefix=name + '_')
+            else:
+                self._logger.log_scalar(loss, prefix + name, step, phase)
 
     def _load_weights(self, weight_loading_info):
         """

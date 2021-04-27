@@ -163,11 +163,11 @@ class ModelTrainer(BaseTrainer):
             data_conf = AttrDict()
             data_conf.dataset_spec = AttrDict(data_conf_file.dataset_spec)
         
+        if args.gpu != -1:
+            os.environ["CUDA_VISIBLE_DEVICES"] = str(args.gpu)
+        else:
+            os.environ["CUDA_VISIBLE_DEVICES"] = str(0)
         print(f'Using GPU {os.environ["CUDA_VISIBLE_DEVICES"]}')
-        #if args.gpu != -1:
-        #    os.environ["CUDA_VISIBLE_DEVICES"] = str(args.gpu)
-        #else:
-        #    os.environ["CUDA_VISIBLE_DEVICES"] = str(0)
 
         return args, conf_module, conf, model_conf, data_conf, exp_dir, conf_path
     
@@ -275,7 +275,8 @@ class ModelTrainer(BaseTrainer):
             inputs = AttrDict(map_dict(lambda x: x.to(self.device), sample_batched))
 
             output = self.model(inputs)
-            losses = self.model.optim_step(output)
+            losses = self.model.loss(output)
+            self.model.optim_step(output, losses)
 
             upto_log_time.update(time.time() - end)
             if self.log_outputs_now:
