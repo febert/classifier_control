@@ -6,7 +6,7 @@ imutils==0.4.6
 matplotlib==2.2.2
 more-itertools==4.2.0
 moviepy==0.2.3.5
-numpy==1.14.5
+numpy==1.22.0
 numpy-stl==2.8.0
 opencv-python==3.4.2.16
 Pillow==5.2.0
